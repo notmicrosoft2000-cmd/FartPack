@@ -24,14 +24,31 @@ count_players() {
 }
 
 echo "=== waiting for an empty server (max ${MAXWAIT}s) ==="
+# Two consecutive empty polls, 30s apart, before we act.
+#
+# A single 0 is not enough. On the first attempt the wait loop saw 0, the
+# re-confirm 20 seconds later also saw 0, and then lint.sh's own guard - which
+# runs later still, and is the check that matters because lint EXECUTES commands -
+# saw 1 and refused. A player had walked in during the gap. Nothing was deployed
+# and nothing was executed at them, so that was a correct outcome, not a failure,
+# but it wasted the attempt. Requiring the server to be empty across a 30 second
+# window means we only act on a real gap rather than a momentary dip.
+needzero=2
+zeros=0
 while :; do
   n=$(count_players)
   if [ -z "$n" ]; then
     echo "  $t: player count UNREADABLE - not assuming empty, still waiting"
+    zeros=0
   elif [ "$n" = "0" ]; then
-    echo "  $t: 0 players online, proceeding"
-    break
+    zeros=$((zeros+1))
+    echo "  $t: 0 players online (consecutive: $zeros/$needzero)"
+    if [ "$zeros" -ge "$needzero" ]; then
+      echo "  $t: empty across a ${needzero}-poll window, proceeding"
+      break
+    fi
   else
+    zeros=0
     # Only narrate on change, so the log stays readable over 90 minutes.
     if [ "${last:-x}" != "$n" ]; then echo "  $t: $n online, waiting"; last="$n"; fi
   fi
