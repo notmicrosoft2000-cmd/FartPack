@@ -24,4 +24,4 @@ scoreboard players set #stats fart.total 0
 execute unless score #enabled fart.var matches 0 run scoreboard players set #enabled fart.var 1
 scoreboard objectives setdisplay sidebar fart.total
 data modify storage fartpack:data macro set value {}
-scoreboard players set #loaded fart.var 19
+scoreboard players set #loaded fart.var 20

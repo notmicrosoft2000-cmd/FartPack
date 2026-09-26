@@ -21,22 +21,26 @@ RP_SRC="fartpack_sounds"
 DP_OUT="fartpack-latest.zip"
 RP_OUT="fartpack_sounds.zip"
 
-# 1. datapack
+# 1. regenerate anything derived from source, so it can never be stale.
+#    world/block_name.mcfunction is derived from tags/block/utility.json.
+python3 build/genblocknames.py "$DP_SRC"
+
+# 2. datapack
 if [ "$VER" != "latest" ]; then DP_OUT="fartpack-v${VER}.zip"; fi
 rm -f "$DP_OUT"
 ( cd "$DP_SRC" && zip -r -X "../$DP_OUT" . -x '*.DS_Store' >/dev/null )
 
-# 2. resource pack
+# 3. resource pack
 rm -f "$RP_OUT"
 ( cd "$RP_SRC" && zip -r -X "../$RP_OUT" . -x '*.DS_Store' >/dev/null )
 
-# 3. mirror src/datapack so the old copy stops drifting (gitignored, but some tools use it)
+# 4. mirror src/datapack so the old copy stops drifting (gitignored, but some tools use it)
 mkdir -p src/datapack
 rsync -a --delete "$DP_SRC/data/" src/datapack/data/
 mkdir -p src/resourcepack
 rsync -a --delete "$RP_SRC/" src/resourcepack/
 
-# 4. archive the datapack by version
+# 5. archive the datapack by version
 if [ "$VER" != "latest" ]; then
   mkdir -p backups/fartpack
   cp "$DP_OUT" "backups/fartpack/v${VER}.zip"

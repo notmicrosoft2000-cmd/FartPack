@@ -54,12 +54,25 @@ python3 /tmp/rcon.py \
 sleep 4
 echo
 echo "=== internal counters ==="
+# Compare the live version gate against what we just deployed. Pass the expected
+# version explicitly: ./deploy.sh 20. A hand-typed number in two places is how
+# the previous check drifted out of sync with the pack.
+EXPECT="${1:-}"
 python3 /tmp/rcon.py \
-  'execute if score #loaded fart.var matches 19 run say GATE_ok_loaded19' \
-  'execute if score #loaded fart.var matches 18 run say WARN_still_18' \
-  'execute if score #rc fart.var matches 0.. run say reap_counter_live' \
-  'execute if score #scan_c fart.var matches 0..30 run say scan_cycle_live' \
-  'execute if score #enabled fart.var matches 1 run say enabled_ok'
+  'scoreboard players get #loaded fart.var' \
+  'scoreboard players get #rc fart.var' \
+  'scoreboard players get #scan_c fart.var' \
+  'scoreboard players get #enabled fart.var' 2>/dev/null \
+  | grep -E 'has [0-9-]+|none is set' | sed 's/^/  /'
+if [ -n "$EXPECT" ]; then
+  LIVE=$(python3 /tmp/rcon.py 'scoreboard players get #loaded fart.var' 2>/dev/null \
+         | grep -oE 'has [0-9-]+' | grep -oE '[0-9-]+$')
+  if [ "$LIVE" = "$EXPECT" ]; then
+    echo "  version gate OK: #loaded=$LIVE (expected $EXPECT)"
+  else
+    echo "  MISMATCH: #loaded=$LIVE but we deployed $EXPECT -- bootstrap did not run"
+  fi
+fi
 
 sleep 3
 echo

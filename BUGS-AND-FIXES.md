@@ -2,7 +2,9 @@
 
 > Living document. Read this before touching the pack.
 > Companion to the server journals (`~/homelab/AI-JOURNAL.md`, `~/homelab/server-info/JOURNAL.md`).
-> Last updated: 2026-09-26. **v19 deployed** (Passes A + B + C shipped; Pass D partly done).
+> Last updated: 2026-09-26. **v19 deployed**; **v20 built, pending deploy** (Passes A–D shipped,
+> Pass E is the three player-reported fixes #22–#24).
+> Source of truth and history: https://github.com/notmicrosoft2000-cmd/FartPack
 
 ## 0. Ground rules / orientation
 
@@ -121,7 +123,8 @@ Persistent: `#loaded` (version int, currently **19**) `#enabled` `#neg1 #one #te
 #scan_c` (30-tick cycle, 1..30 then 0) `#rc` (gas reaper, fires at 200) `#stats` `#pid_counter
 #cloud #eb_tmp`
 Per-call scratch (safe: execution is synchronous): `#power #vy #radius #ppx #ppz #ppx10 #ppz10 #tx #tz
-#dx #dz #adx #adz #dist #dist10 #vx #vz #ux10 #uz10 #steps #hop #mx10 #mz10 #curx10 #curz10 #fpx #fpz #fdist`
+#dx #dz #adx #adz #dist #dist10 #vx #vz #ux10 #uz10 #vy10 #steps #hop #mx10 #mz10 #curx10 #curz10 #fpx #fpz #fdist
+#sdx #sdz #smx #smz` (the last four are the movement detector in `player/stress`, added in v20)
 
 ### Player / entity tags
 `fart.has_pid` `fart.sneak` `fart.releasing` `fart.healtick` `fart.healing` `fart.warnfull`
@@ -133,6 +136,7 @@ Per-call scratch (safe: execution is synchronous): `#power #vy #radius #ppx #ppz
 ## 2. Bug catalogue
 
 Status: `FIXED-18` = fixed in the v18 deploy. `FIXED-19` = fixed in the v19 deploy.
+`FIXED-20` = fixed in the v20 build, not yet deployed.
 `OPEN-C` / `OPEN-D` = deferred.
 `WRONG` = an earlier hypothesis of mine that was **disproved**; kept so it is not re-investigated.
 
@@ -404,6 +408,128 @@ reproduces a known deployed sha1 byte-for-byte. Everything is in git on `main`.
 `if entity @s` (removed) and a tellraw whose closing `")"` was split into its own text component
 (merged).
 
+#### #22 — holding a crouch on an empty tank never did damage  · **FIXED in v20**
+Reported by the user in-game: *"continuing to crouching with the bar empty does not give you
+damage."* Not intermittent — **mathematically impossible**, in every reachable state.
+
+`player/stress` forgives all accumulated strain while the bar has gas, and only hurts after 20
+consecutive empty-bar ticks:
+
+```
+execute if score @s fart.pressure matches 1.. run scoreboard players set @s fart.stress 0
+execute if score @s fart.stress matches 20.. unless score @s fart.pressure matches 1.. run function fartpack:player/stress_hurt
+```
+
+But `player/fill_gas` **adds** pressure when the player is *not* moving, and only runs on 3 of
+every 30 ticks:
+
+```
+execute if score #fdist fart.var matches 0 unless score @s fart.slow matches 1.. run scoreboard players add @s fart.pressure 1
+```
+
+So standing still refilled the bar within 10 ticks, and 10 < 20, so `fart.stress` was reset
+before it could ever arrive. The only way to hold an empty tank for 20 straight ticks would have
+been to crouch-walk, which is exactly what the mechanic was supposed to punish. The two halves
+of the design contradicted each other: the refill existed to punish standing still, and it also
+neutralised the damage.
+
+**Fix:** the bar refills *because* you are stationary, so movement is what lets the strain build.
+`player/stress` now reads the same position delta `player/fill_gas` reads (`Pos × 100`
+differenced against `fart.lastx`/`fart.lastz`) and clears `fart.stress` on any movement. It only
+*reads* `fart.lastx`/`fart.lastz` — those are written by `core/assign_pid` and `player/fill_gas`,
+so `fill_gas`'s own distance maths cannot be corrupted. Ordering is safe: `player/press` runs on
+`tick.mcfunction:48`, after `player/fill_gas` on lines 43–45.
+
+The standing-still refill is deliberately **kept**: an empty tank has to stay reachable, or this
+whole file is dead code. It is reached by crouching a full bar down (`player/release_gas`),
+by `world/fart_forced` resetting the bar at 100, and by toggling the pack off/on.
+
+Resulting loop, which is what was originally intended:
+
+| you are | result |
+|---|---|
+| crouching, gas in the bar | heals, no damage — gas forgives the strain |
+| crouching, empty tank, standing still | 1 damage/second after a 1s grace |
+| crouching, empty tank, moving | no damage — movement is how you recover |
+| standing up | no damage — only crouching strains |
+
+The actionbar text was wrong too, and in the opposite direction: it said *"Get moving to build
+pressure!"* when gas clouds build pressure, not walking, and since v20 moving is precisely how
+you stop straining. Now reads *"Move to steady yourself!"*
+
+Verified on a live `chicken` (a real entity, so `data get entity @s Pos` genuinely resolves):
+stationary with `fart.stress`=19 takes the damage; the same bird teleported 3 blocks first does
+not. `build/stresstest.sh`.
+
+---
+
+#### #23 — block-fart announcements lost the block name (a v19 regression I introduced)  · **FIXED in v20**
+Reported by the user: *"it used to say 'crafting table farted!' now its just a utility block
+farted!"* — and they were right. This was self-inflicted by #16 in Pass C.
+
+v13–v18 announced the specific block via 18 hand-written `if block <id>` + `tellraw` pairs. The
+problem was drift, not verbosity: the tag drove the timer and the hand-written copy drove the
+chat, so they had already diverged (21 blocks tagged, 18 announced). Collapsing it to one generic
+line in v19 fixed the drift and deleted the detail. That was the wrong trade.
+
+**Fix:** the names come back and the hand-maintained copy does not, because the list is
+**generated from the tag at build time** by `build/genblocknames.py` (called from `build.sh`):
+
+- `world/block_name.mcfunction` (generated, 64 one-line lookups) sets `storage fartpack:msg name`
+  to a phrase like `"a crafting table"`, with the a/an chosen by the generator.
+- `world/fart_msg.mcfunction` is a string macro holding the one and only copy of the sentence,
+  with `$(name)` spliced in.
+- `world/fart_block` calls the two in order.
+
+The generated file **resets `name` to `"a utility block"` before the lookup chain**. That is
+load-bearing: if a block is in the tag but somehow missing from the generated file, you get the
+generic message rather than the name of whatever block matched previously. A missing entry can be
+vaguely wrong; it can never be confidently wrong.
+
+Inlining the name into a per-block `tellraw` was rejected precisely because that recreates the
+18-pair structure. This way the per-block data is data, the sentence is one line, and neither can
+drift from the other.
+
+#### #24 — player knockback was applied as teleportation, so first-person read as a teleport  · **FIXED in v20**
+Reported by the user: *"when anything fart it does knockback but in the pov of a player the
+knockback looks more like teleportation not knocking back."* Accurate, and the cause was blunt.
+
+`push/player` used to be a **hopper**: summon a marker, advance the marker in small steps, and
+`tp @s` the player onto it, recursing once per step — and the recursion happened **inside a single
+tick** (`push/player_step` → `push/player_hop` → `push/player_step`). So a player's entire
+knockback was a burst of instantaneous position changes within one frame. In third person that
+reads as knockback, because you watch the whole body displace; from your own first-person camera
+it is literally a teleport.
+
+Mobs never had this problem: `push/one` sets `Motion`, which is what vanilla knockback actually is
+(an explosion's impulse). The client interpolates it, so it reads as a shove and the server never
+contradicts the client's position.
+
+**Fix:** players get `Motion` too, via the same idiom as `push/one`. The whole marker / step /
+recurse machinery is gone — `push/player_step` and `push/player_hop` are deleted, along with the
+per-step `fart.hopper` marker summons, which were pure overhead.
+
+Two things fixed as a consequence:
+
+- **`#vy` was silently discarded for players.** The old hop only ever wrote `Pos[0]` and `Pos[2]`,
+  never `Pos[1]`, so the vertical impulse (20 for a normal push, 40 for legendary) was computed
+  and thrown away. Nobody had ever been popped upward — only mobs were. It now applies, which is
+  what the numbers always implied.
+- **Less integer truncation at range.** `push/one` divides straight down to an integer, so at
+  `#power` 12 and distance 12 a component can floor to 0 and the far edge of the radius gets
+  almost nothing. `push/player` carries a factor of 10 through the division and stores with
+  `double 0.001`, so the impulse lands in 1/1000 blocks per tick and stays consistent across the
+  radius. Four extra fake players, no measurable cost.
+
+Deliberately **not** added: a minimum-velocity floor. A hit straight down one axis legitimately
+has a zero component on the other, and forcing a non-zero value there would shove players
+sideways for no reason. The only thing that needed guarding was division by zero, via the
+existing `#dist` floor of 1.
+
+**Not verified by machine:** whether it *feels* right is a human judgement. The scripted check
+proves a player now receives a non-zero `Motion` where it previously received a `tp`. Someone has
+to stand next to a farting sheep and confirm.
+
 ---
 
 ## 3. Fix order (passes)
@@ -413,7 +539,8 @@ reproduces a known deployed sha1 byte-for-byte. Everything is in git on `main`.
 | **A** | Safety. Complete `core/bootstrap` + unify `load`; version-gate `#loaded`; init `#noplayer`/`#scan_c`/`#stats`; fix `actionbar`; probe-based `ensure_bar` + `#eb_tmp`; drop `fart.lasty`, `#ppy`, `bar/hide*`, `bar/show*`, `push/gentle`; clean live bossbar/scoreboard junk. | **shipped in v18** |
 | **B** | Felt bugs. `no_push` tag (#6); explicit `#power` (#11); `unless 1..` in stress (#8); stress cadence + de-spaghetti (#9); `fart.pressure` clamp (#10); real sound throttle (#7). | **shipped in v18** |
 | **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
-| **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **pending**. | partly done |
+| **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **done**. | **done in v19/v20** |
+| **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **built, pending deploy** |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
 1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the

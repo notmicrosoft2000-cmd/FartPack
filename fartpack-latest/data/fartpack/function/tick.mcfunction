@@ -24,7 +24,7 @@
 #           (markers still tick on 15-90s timers, so invisible) and the tracked
 #           entity set is up to 1s stale.
 #   lines 18-19 per-tick player stuff
-execute unless score #loaded fart.var matches 19 run function fartpack:core/bootstrap
+execute unless score #loaded fart.var matches 20 run function fartpack:core/bootstrap
 scoreboard players enable @a fart.toggle
 execute as @a[scores={fart.toggle=1..}] run function fartpack:core/do_toggle
 execute as @a[scores={fart.toggle=1..}] run scoreboard players set @s fart.toggle 0

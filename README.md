@@ -20,8 +20,37 @@ independent fart timer that releases a different flavour of deadly gas.
 
 ```sh
 ./build.sh          # -> fartpack-latest.zip
-./build.sh v19      # -> fartpack-v19.zip + backups/fartpack/v19.zip, refreshes fartpack-latest.zip
+./build.sh v20      # -> fartpack-v20.zip + backups/fartpack/v20.zip, refreshes fartpack-latest.zip
 ```
+
+`build.sh` also **regenerates** `world/block_name.mcfunction` from `tags/block/utility.json`
+before zipping, so the block-name announcements can never drift from the tag. That file is
+committed, but treat it as build output — edit `build/genblocknames.py` or the tag, never the
+generated file.
+
+## Publishing the resource pack
+
+The sound pack must be reachable at a URL that does not expire. Discord CDN links carry a signed
+`ex=` parameter that dies ~30 hours after upload, and with `require-resource-pack=true` an expired
+URL means **nobody can join the server at all**.
+
+It is published as a **GitHub release asset**, whose URL is permanent:
+
+```sh
+SHA=$(sha1sum fartpack_sounds.zip | cut -d' ' -f1)
+gh release create rp-v20 --repo notmicrosoft2000-cmd/FartPack \
+  --title "Resource pack rp-v20" --notes "sha1: $SHA" fartpack_sounds.zip
+```
+
+Then point the server at it and restart (the sha1 is only read at boot):
+
+```
+resource-pack=https\://github.com/notmicrosoft2000-cmd/FartPack/releases/download/rp-v20/fartpack_sounds.zip
+resource-pack-sha1=<sha1>
+```
+
+Always download the URL back and compare sha1s **before** restarting. A resource pack URL that
+404s locks every player out of the server, and you find out at the worst possible moment.
 
 ## Before deploying the datapack — always lint
 

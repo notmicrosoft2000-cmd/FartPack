@@ -1,0 +1,80 @@
+# GENERATED FILE - do not edit by hand.
+# Regenerate with: python3 build/genblocknames.py fartpack-latest
+# (build.sh does this automatically on every build.)
+#
+# Source of truth is tags/block/utility.json. 64 blocks.
+#
+# Sets storage fartpack:msg name to a human phrase for the block at
+# ~ ~ ~, e.g. "a crafting table". Read afterwards by the string macro
+# world/fart_msg.
+#
+# The reset on the next line is load-bearing: it guarantees a block that
+# is in the tag but missing from this file can never inherit the name of
+# a previously-matched block. Missing entry -> generic message, not a
+# wrong name.
+
+data modify storage fartpack:msg name set value "a utility block"
+execute if block ~ ~ ~ minecraft:anvil run data modify storage fartpack:msg name set value "an anvil"
+execute if block ~ ~ ~ minecraft:barrel run data modify storage fartpack:msg name set value "a barrel"
+execute if block ~ ~ ~ minecraft:beacon run data modify storage fartpack:msg name set value "a beacon"
+execute if block ~ ~ ~ minecraft:beehive run data modify storage fartpack:msg name set value "a beehive"
+execute if block ~ ~ ~ minecraft:bell run data modify storage fartpack:msg name set value "a bell"
+execute if block ~ ~ ~ minecraft:black_shulker_box run data modify storage fartpack:msg name set value "a black shulker box"
+execute if block ~ ~ ~ minecraft:blast_furnace run data modify storage fartpack:msg name set value "a blast furnace"
+execute if block ~ ~ ~ minecraft:blue_shulker_box run data modify storage fartpack:msg name set value "a blue shulker box"
+execute if block ~ ~ ~ minecraft:bookshelf run data modify storage fartpack:msg name set value "a bookshelf"
+execute if block ~ ~ ~ minecraft:brewing_stand run data modify storage fartpack:msg name set value "a brewing stand"
+execute if block ~ ~ ~ minecraft:brown_shulker_box run data modify storage fartpack:msg name set value "a brown shulker box"
+execute if block ~ ~ ~ minecraft:campfire run data modify storage fartpack:msg name set value "a campfire"
+execute if block ~ ~ ~ minecraft:cartography_table run data modify storage fartpack:msg name set value "a cartography table"
+execute if block ~ ~ ~ minecraft:cauldron run data modify storage fartpack:msg name set value "a cauldron"
+execute if block ~ ~ ~ minecraft:chest run data modify storage fartpack:msg name set value "a chest"
+execute if block ~ ~ ~ minecraft:chipped_anvil run data modify storage fartpack:msg name set value "a chipped anvil"
+execute if block ~ ~ ~ minecraft:chiseled_bookshelf run data modify storage fartpack:msg name set value "a chiseled bookshelf"
+execute if block ~ ~ ~ minecraft:composter run data modify storage fartpack:msg name set value "a composter"
+execute if block ~ ~ ~ minecraft:conduit run data modify storage fartpack:msg name set value "a conduit"
+execute if block ~ ~ ~ minecraft:crafter run data modify storage fartpack:msg name set value "a crafter"
+execute if block ~ ~ ~ minecraft:crafting_table run data modify storage fartpack:msg name set value "a crafting table"
+execute if block ~ ~ ~ minecraft:cyan_shulker_box run data modify storage fartpack:msg name set value "a cyan shulker box"
+execute if block ~ ~ ~ minecraft:damaged_anvil run data modify storage fartpack:msg name set value "a damaged anvil"
+execute if block ~ ~ ~ minecraft:decorated_pot run data modify storage fartpack:msg name set value "a decorated pot"
+execute if block ~ ~ ~ minecraft:dispenser run data modify storage fartpack:msg name set value "a dispenser"
+execute if block ~ ~ ~ minecraft:dropper run data modify storage fartpack:msg name set value "a dropper"
+execute if block ~ ~ ~ minecraft:enchanting_table run data modify storage fartpack:msg name set value "an enchanting table"
+execute if block ~ ~ ~ minecraft:end_rod run data modify storage fartpack:msg name set value "an end rod"
+execute if block ~ ~ ~ minecraft:ender_chest run data modify storage fartpack:msg name set value "an ender chest"
+execute if block ~ ~ ~ minecraft:flower_pot run data modify storage fartpack:msg name set value "a flower pot"
+execute if block ~ ~ ~ minecraft:furnace run data modify storage fartpack:msg name set value "a furnace"
+execute if block ~ ~ ~ minecraft:gray_shulker_box run data modify storage fartpack:msg name set value "a gray shulker box"
+execute if block ~ ~ ~ minecraft:green_shulker_box run data modify storage fartpack:msg name set value "a green shulker box"
+execute if block ~ ~ ~ minecraft:grindstone run data modify storage fartpack:msg name set value "a grindstone"
+execute if block ~ ~ ~ minecraft:hopper run data modify storage fartpack:msg name set value "a hopper"
+execute if block ~ ~ ~ minecraft:iron_bars run data modify storage fartpack:msg name set value "an iron bars"
+execute if block ~ ~ ~ minecraft:jukebox run data modify storage fartpack:msg name set value "a jukebox"
+execute if block ~ ~ ~ minecraft:lantern run data modify storage fartpack:msg name set value "a lantern"
+execute if block ~ ~ ~ minecraft:lava_cauldron run data modify storage fartpack:msg name set value "a lava cauldron"
+execute if block ~ ~ ~ minecraft:lectern run data modify storage fartpack:msg name set value "a lectern"
+execute if block ~ ~ ~ minecraft:light_blue_shulker_box run data modify storage fartpack:msg name set value "a light blue shulker box"
+execute if block ~ ~ ~ minecraft:light_gray_shulker_box run data modify storage fartpack:msg name set value "a light gray shulker box"
+execute if block ~ ~ ~ minecraft:lime_shulker_box run data modify storage fartpack:msg name set value "a lime shulker box"
+execute if block ~ ~ ~ minecraft:loom run data modify storage fartpack:msg name set value "a loom"
+execute if block ~ ~ ~ minecraft:magenta_shulker_box run data modify storage fartpack:msg name set value "a magenta shulker box"
+execute if block ~ ~ ~ minecraft:note_block run data modify storage fartpack:msg name set value "a note block"
+execute if block ~ ~ ~ minecraft:orange_shulker_box run data modify storage fartpack:msg name set value "an orange shulker box"
+execute if block ~ ~ ~ minecraft:pink_shulker_box run data modify storage fartpack:msg name set value "a pink shulker box"
+execute if block ~ ~ ~ minecraft:powder_snow_cauldron run data modify storage fartpack:msg name set value "a powder snow cauldron"
+execute if block ~ ~ ~ minecraft:purple_shulker_box run data modify storage fartpack:msg name set value "a purple shulker box"
+execute if block ~ ~ ~ minecraft:red_shulker_box run data modify storage fartpack:msg name set value "a red shulker box"
+execute if block ~ ~ ~ minecraft:respawn_anchor run data modify storage fartpack:msg name set value "a respawn anchor"
+execute if block ~ ~ ~ minecraft:sculk_catalyst run data modify storage fartpack:msg name set value "a sculk catalyst"
+execute if block ~ ~ ~ minecraft:shulker_box run data modify storage fartpack:msg name set value "a shulker box"
+execute if block ~ ~ ~ minecraft:smithing_table run data modify storage fartpack:msg name set value "a smithing table"
+execute if block ~ ~ ~ minecraft:smoker run data modify storage fartpack:msg name set value "a smoker"
+execute if block ~ ~ ~ minecraft:soul_campfire run data modify storage fartpack:msg name set value "a soul campfire"
+execute if block ~ ~ ~ minecraft:soul_lantern run data modify storage fartpack:msg name set value "a soul lantern"
+execute if block ~ ~ ~ minecraft:stonecutter run data modify storage fartpack:msg name set value "a stonecutter"
+execute if block ~ ~ ~ minecraft:target run data modify storage fartpack:msg name set value "a target"
+execute if block ~ ~ ~ minecraft:trapped_chest run data modify storage fartpack:msg name set value "a trapped chest"
+execute if block ~ ~ ~ minecraft:water_cauldron run data modify storage fartpack:msg name set value "a water cauldron"
+execute if block ~ ~ ~ minecraft:white_shulker_box run data modify storage fartpack:msg name set value "a white shulker box"
+execute if block ~ ~ ~ minecraft:yellow_shulker_box run data modify storage fartpack:msg name set value "a yellow shulker box"
