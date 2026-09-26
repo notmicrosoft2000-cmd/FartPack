@@ -19,6 +19,12 @@ execute if score #radius fart.var matches 3 run tag @e[type=!#fartpack:no_push,t
 execute if score #radius fart.var matches 4 run tag @e[type=!#fartpack:no_push,tag=!fart.pushersrc,name=!"Server",distance=..4] add fart.pushtarget
 execute if score #radius fart.var matches 5 run tag @e[type=!#fartpack:no_push,tag=!fart.pushersrc,name=!"Server",distance=..5] add fart.pushtarget
 execute if score #radius fart.var matches 12 run tag @e[type=!#fartpack:no_push,tag=!fart.pushersrc,name=!"Server",distance=..12] add fart.pushtarget
+# Global admin switch: at 1, players are never knockback targets, whoever farted.
+# Nothing in the pack sets it any more - push/release used to set it around its own
+# call, which is why a player's crouch fart could not shove another player while a
+# sheep's could. It is left here as a pack-wide opt-out:
+#   /scoreboard players set #noplayer fart.var 1
+# bootstrap initialises it to 0, so a crash mid-push can never strand it at 1.
 execute if score #noplayer fart.var matches 1 run tag @e[type=minecraft:player,tag=fart.pushtarget] remove fart.pushtarget
 execute as @e[tag=fart.pushtarget,type=minecraft:player] at @s run function fartpack:push/player
 execute as @e[tag=fart.pushtarget,type=!minecraft:player] at @s run function fartpack:push/one

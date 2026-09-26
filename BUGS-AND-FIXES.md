@@ -629,6 +629,70 @@ when `#enabled` is 0, so `world/tick` never runs and the rain particle loop simp
 `#rain_dur` already expired. `core/toggle_off` now clears `#raining`, `#rain_c` and `#event_cd`, so
 toggling is an actual stop rather than a pause.
 
+#### #28 — a player crouch-farting could not shove another player, but a sheep could  · **FIXED in v25**
+Reported by the user as "bring back players can be knocked back by other players crouch farting".
+Not a crash and not an intermittent failure — a deliberate v16.3 change that had gone stale.
+
+`push/release` set `#noplayer 1` around its call to `push/core`, and `push/core` responds to that by
+stripping every player out of the target set:
+
+```mcfunction
+execute if score #noplayer fart.var matches 1 run tag @e[type=minecraft:player,tag=fart.pushtarget] remove fart.pushtarget
+```
+
+The oddity is that `push/release` was the **only** caller in the entire pack that set that flag. So
+the four push sources disagreed with each other:
+
+| source of the fart | pushes a nearby player? |
+|---|---|
+| a sheep / mob farting (`push/norm`) | **yes** |
+| a farting furnace or jukebox (`push/block`) | **yes** |
+| a small / legendary push | **yes** |
+| **another player crouch-farting** (`push/release`) | **no** |
+
+A mob could shove you across a room; the person standing next to you could not. That is the kind of
+inconsistency that reads as a bug even when you cannot articulate it.
+
+The fix deletes the two `#noplayer` lines in `push/release` rather than setting them to 0, because
+with nothing setting it to 1 the flag is no longer a per-call parameter. It is left in `push/core`
+and `core/bootstrap` as what it should have been all along: a **pack-wide admin opt-out**, for the
+case where player-vs-player shoving turns out to be griefing in practice.
+
+```
+/scoreboard players set #noplayer fart.var 1    # nobody can be shoved, by anything
+/scoreboard players set #noplayer fart.var 0    # back on
+```
+
+`bootstrap` still initialises it to 0, which is the #4 fix and still correct: a crash inside the old
+`push/release` window can no longer strand the flag at 1.
+
+Self-knockback is unaffected either way — it goes through `push/self`, which calls `push/player`
+directly and never reads `#noplayer`. And a player can never push themselves through the general
+path, because `push/core` tags the source as `fart.pushersrc` and every target selector requires
+`tag=!fart.pushersrc`.
+
+**Not machine-verified, by construction.** Proving the shove needs a second player to *be* the push
+target, and every deploy in this project is gated on 0 players online. What is verified is that no
+executable line anywhere in the pack sets `#noplayer` to 1 any more, so the strip in `push/core`
+cannot fire during a crouch release. The shove itself needs two people in-game.
+
+**Also in this version: the lifesteal datapack was removed** at the user's request. It was a
+third-party pack (`lifesteal_1.21.11.zip`, authored on a Mac — it carried `__MACOSX` and
+`.DS_Store` entries, which is where the `.DS_Store` warnings in the log came from) and it was the
+source of the long-standing `utility/quickdeath` parse error, since that function does
+`gamerule doImmediateRespawn true` / `kill @s` / `gamerule doImmediateRespawn false`.
+
+It was **backed up before removal** and the copy verified byte-identical by sha256, not trusted from
+`cp`'s exit code:
+
+```
+/home/nept/crafty/removed-datapacks/removed-from-datapacks/lifesteal_1.21.11.zip
+40d208df268981a6ccec223265b48e6fb273add16e080473c45a0d3dbd186ac0
+```
+
+That directory is outside `world/datapacks`, so the backup cannot be loaded by accident. `pwr` and
+`Graves` were not touched. Script: `build/remove-lifesteal.sh`.
+
 ---
 
 ## 2b. v25 — the weather and event port
@@ -651,6 +715,10 @@ rewritten against the current architecture, and nothing else was touched.
   *tag*, not each block, so widening the tag adds no per-tick cost. `world/block_name` is
   regenerated from the tag by `build/genblocknames.py` and picked all six up.
 - The #26 advancement-revoke fix and the #27 toggle-off fix described above.
+
+Two changes in v25 came from the user rather than the fork, and are written up as #28: the
+player-vs-player knockback was restored, and the unrelated third-party lifesteal datapack was
+removed from the server.
 
 **Deliberately NOT taken** — this is the part that matters, because a naive copy would have undone
 five shipped fixes:
@@ -699,7 +767,7 @@ beyond "different from 20 so bootstrap re-runs".
 | **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
 | **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **done**. | **done in v19/v20** |
 | **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **shipped in v20, all three machine-verified** |
-| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27). | **v25, lint-clean, pending deploy** |
+| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27); player-vs-player knockback restored (#28); lifesteal datapack removed. | **v25, lint-clean, pending deploy** |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
 1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the

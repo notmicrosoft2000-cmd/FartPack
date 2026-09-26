@@ -96,4 +96,37 @@ done
 echo "  #rain_target is EXPECTED to be unset until fart_rain_tick picks one."
 
 echo
+echo "--- player-vs-player knockback flag (must be 0; 1 would disable it pack-wide) ---"
+python3 /tmp/rcon.py 'scoreboard players get #noplayer fart.var' 2>/dev/null | tail -2
+
+echo
+echo "--- lifesteal must be GONE, and pwr / Graves must be untouched ---"
+DPS=$(python3 /tmp/rcon.py 'datapack list' 2>/dev/null)
+if printf '%s' "$DPS" | grep -qi 'lifesteal'; then
+  echo "  PROBLEM: lifesteal is still present after the reload:"
+  printf '  %s\n' "$DPS" | grep -io '[^ ()]*lifesteal[^ ()]*'
+else
+  echo "  lifesteal: gone. good."
+fi
+printf '%s' "$DPS" | grep -qi 'pwr' \
+  && echo "  pwr: still enabled. good." \
+  || echo "  NOTE: pwr is not enabled. It was enabled before this deploy - check."
+printf '%s' "$DPS" | grep -qi 'Graves' \
+  && echo "  Graves: still available. good (it was never enabled)." \
+  || echo "  NOTE: Graves is no longer listed at all - check."
+
+echo
+echo "--- backup of the removed pack, on disk ---"
+ls -1 "$HOME/crafty/removed-datapacks/removed-from-datapacks/" 2>/dev/null \
+  | sed 's/^/  /' || echo "  MISSING: no backup dir - lifesteal is gone with no way back."
+
+echo
+echo "############ NOT VERIFIABLE HERE ############"
+echo "Player-vs-player knockback itself. Proving it needs a second player to be"
+echo "the push target, and this gate only ever runs with 0 players online. What IS"
+echo "checked is that nothing sets #noplayer to 1 any more, so the strip in"
+echo "push/core cannot fire during a crouch release. Ask a player to crouch-fart"
+echo "next to another player and confirm the other one is shoved."
+
+echo
 echo "=== DONE. v25 deployed. ==="
