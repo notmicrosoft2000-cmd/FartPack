@@ -51,6 +51,17 @@ because keeping two live copies is what caused the pre-v18 divergence. Everythin
    one **silently truncates** output — `scoreboard objectives list` then looks like objectives are
    missing when they are not. This cost real time during the v19 deploy; `build/rcon.py` now
    drains until the type-2 empty terminator. Do not "simplify" it back.
+10. **Vanilla rotates `logs/latest.log` on every boot** (renames it to a dated `.gz` and starts a
+    fresh one). So a line-number mark taken *before* a restart points past the end of the new
+    file, and any "check the new lines for errors" step silently inspects **nothing** and reports
+    success. My first post-restart check reported `0 Failed to load` over an empty range. Use
+    `build/postrestart.sh`, which checks the whole new file and asserts the `Done (...)` line.
+    Line-number windows are only valid for a *reload*.
+11. **Crafty's real endpoints are `/api/v2/servers/<id>/action/{start,stop,restart}_server`.** The
+    plausible-looking `/api/v2/commands/<id>` and `/api/v2/servers/<id>/start` return
+    `404 API_HANDLER_NOT_FOUND` and the server never restarts. The failure is nasty because a
+    naive "is it back?" poll then reports success on a server that never moved — always assert
+    you *observed* it go down. The creds file is JSON and the token is at `data.token`.
 
 ### Vanilla-behaviour facts established empirically (do not re-derive)
 | Question | Answer | How verified |
@@ -413,14 +424,17 @@ reproduces a known deployed sha1 byte-for-byte. Everything is in git on `main`.
 4. Deploy → `datapack enable "file/fartpack.zip"` → `reload`.
 5. `grep 'Failed to load' logs/latest.log` **for the new line range only** — old errors stay in the
    file forever and a bare `grep -c` will make you think you broke something. Must show only the
-   pre-existing lifesteal `quickdeath` error.
+   pre-existing lifesteal `quickdeath` error. (Valid for a reload only — see gotcha 10.)
 6. `scoreboard players get #loaded fart.var` to confirm the version gate fired.
 7. **Confirm 0 players online *before* reloading, and actually enforce it.** During the v19 deploy
-   the check was printed but not asserted, and a player was online for the reload.
+   the check was printed but not asserted, and a player was online for the reload. `deploy.sh`
+   now aborts, and refuses to deploy if it cannot read the player count at all.
 8. Because of `pause-when-empty-seconds`, step 7's "0 players" also means the pack will not tick
    afterwards. Runtime-verify with `build/smoke.sh`, which drives `fartpack:tick` by hand over
    RCON and works while the server is paused.
 9. `tick query` for a real per-tick timing number.
+10. For a **restart** (needed for any `resource-pack-sha1` change), use `build/postrestart.sh` and
+    `build/craftyrestart.py` — and expect to re-verify the whole new `latest.log`, not a window.
 
 ## 4. Revert
 Every pass is a standalone zip in `backups/fartpack/vNN.zip`, and the pre-session v16 is also at

@@ -55,23 +55,17 @@ def call(path, data=None, tok=None, method="GET"):
         return 0, str(e)
 
 
-def creds():
-    user = pw = None
-    for line in open(CREDS):
-        line = line.strip()
-        if line.lower().startswith("username:"):
-            user = line.split(":", 1)[1].strip()
-        elif line.lower().startswith("password:"):
-            pw = line.split(":", 1)[1].strip()
-    return user, pw
-
-
 def token():
-    u, p = creds()
-    st, body = call("/api/v2/auth/login", {"username": u, "password": p}, method="POST")
+    # The creds file is JSON: {"username": ..., "password": ..., "info": ...}
+    with open(CREDS) as f:
+        creds = json.load(f)
+    st, body = call("/api/v2/auth/login",
+                    {"username": creds["username"], "password": creds["password"]},
+                    method="POST")
     if st != 200:
         sys.exit("crafty login failed: HTTP %s" % st)
-    return json.loads(body)["token"]
+    # token lives under "data", not at the top level
+    return json.loads(body)["data"]["token"]
 
 
 def escape(v):
@@ -120,43 +114,67 @@ def patch(url, sha1):
 
 
 def status():
-    st, body = call("/api/v2/servers/%s" % SID, tok=token())
+    # /api/v2/servers/status -> {"status":..,"data":[{running, online, max, ..}]}
+    st, body = call("/api/v2/servers/status", tok=token())
     try:
-        d = json.loads(body)
-        run = d.get("data", {}).get("run_status", "?")
-        state = d.get("data", {}).get("state", {})
-        log("run_status=%s online_players=%s max_players=%s" %
-            (run, state.get("online_players"), state.get("max_players")))
+        rows = json.loads(body)["data"]
+        for r in rows:
+            if r.get("id") == SID:
+                log("running=%s online=%s/%s" % (r.get("running"), r.get("online"), r.get("max")))
+                return r
+        log("server %s not in status list (%d servers)" % (SID, len(rows)))
+    except Exception as e:
+        log("status parse failed: %s" % e)
+    return None
+
+
+def is_running(tok):
+    st, body = call("/api/v2/servers/status", tok=tok)
+    try:
+        rows = json.loads(body)["data"]
+        r = next((x for x in rows if x.get("id") == SID), None)
+        return r.get("running") if r else None
     except Exception:
-        log("raw: %s" % body[:200])
+        return None
 
 
-def restart(wait_s=180):
+def restart(wait_s=240):
+    """Crafty's real endpoints are /api/v2/servers/<id>/action/<verb>_server.
+
+    Getting this wrong is silent and nasty: an unknown path returns
+    404 API_HANDLER_NOT_FOUND, the server never bounces, but a naive
+    "did it come back?" poll still answers yes because it was never down.
+    So every step below asserts on the actual observed state.
+    """
     tok = token()
-    st, body = call("/api/v2/commands/%s" % SID, {"command": "stop"}, tok=tok, method="POST")
-    log("stop  -> HTTP %s %s" % (st, body[:120]))
+    before = is_running(tok)
+    log("before: running=%s" % before)
+    if before is None:
+        sys.exit("cannot read server status; refusing to restart blind")
+
+    st, body = call("/api/v2/servers/%s/action/restart_server" % SID, {}, tok=tok, method="POST")
+    log("restart_server -> HTTP %s %s" % (st, body[:160]))
+    if st != 200:
+        sys.exit("Crafty refused the restart (HTTP %s). Server left alone." % st)
+
+    # Phase 1: it must actually go down at some point, or nothing happened.
+    went_down = False
     for _ in range(60):
-        time.sleep(3)
-        st, body = call("/api/v2/servers/%s" % SID, tok=tok)
-        try:
-            if json.loads(body)["data"]["run_status"] == "stopped":
-                break
-        except Exception:
-            pass
-    log("server stopped")
-    time.sleep(4)
-    st, body = call("/api/v2/servers/%s/start" % SID, tok=tok, method="POST")
-    log("start -> HTTP %s %s" % (st, body[:120]))
-    for i in range(wait_s // 3):
-        time.sleep(3)
-        st, body = call("/api/v2/servers/%s" % SID, tok=tok)
-        try:
-            d = json.loads(body)["data"]
-            if d.get("run_status") == "running":
-                log("running again after ~%ds" % (i * 3 + 3))
-                return True
-        except Exception:
-            pass
+        time.sleep(2)
+        if is_running(tok) is False:
+            went_down = True
+            log("observed stopped")
+            break
+    if not went_down:
+        log("FAILED: never observed the server stop. The 200 above was not a restart.")
+        return False
+
+    # Phase 2: wait for it to come back.
+    for i in range(wait_s // 2):
+        time.sleep(2)
+        if is_running(tok) is True:
+            log("running again after ~%ds" % ((i + 1) * 2))
+            return True
     log("TIMED OUT waiting for the server to come back")
     return False
 
