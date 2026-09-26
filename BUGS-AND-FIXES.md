@@ -538,18 +538,36 @@ chicken since `push/player` reads only `Pos` and writes only `Motion`, so it is 
 | 3 blocks, power 35 | `[0.35, 0.2, 0.0]` | `[0.35000000000000003d, 0.2d, 0.0d]` |
 | 3 blocks, power 90 (legendary) | `[0.9, 0.4, 0.0]` | `[0.9d, 0.4d, 0.0d]` |
 | 12 blocks, power 12 (long range) | `[0.12, 0.2, 0.0]` | `[0.12d, 0.2d, 0.0d]` |
-| diagonal 3+3, power 35 | `[0.175, 0.2, 0.175]` | see run log |
-| diagonal 3-3, power 35 | `[0.175, 0.2, -0.175]` | see run log |
-| power 0 | `[0.0, 0.0, 0.0]` | `[0.0d, 0.0d, 0.0d]` |
+| diagonal 3+3, power 35 | `[0.175, 0.2, 0.175]` | `[0.17500000000000002d, 0.2d, 0.17500000000000002d]` |
+| diagonal 3-3, power 35 | `[0.175, 0.2, -0.175]` | `[0.17500000000000002d, 0.2d, -0.17500000000000002d]` |
+| power 0 (control) | `[0.0, 0.0, 0.0]` | `[0.0d, 0.0d, 0.0d]` |
 
 The formula normalises by `dx+dz` (Manhattan), not by true distance, so a 3+3 diagonal splits the
 impulse evenly at 0.175 per axis rather than 0.2475. That is the intended behaviour — it is what
 makes a hit feel the same whether it lands along an axis or between two.
 
-The first run of this table reported the diagonal as `[0.35, 0.2, 0.0]` — identical to the
-straight case — because the harness hardcoded the source Z to the bird's own Z, so `dz` was 0 and
-the "diagonal" was not one. A test case that cannot fail is worse than no test case, because it
-gets reported as a pass.
+**Getting this test to tell the truth took four fixes, each of which had produced a table that
+looked like a real result:**
+
+1. The "diagonal" case hardcoded the source Z to the bird's own Z, so `dz` was 0 and it was
+   secretly identical to the straight case. It dutifully reported the straight-case numbers.
+2. The bird was mobile, so it drifted and fell between the scoreboard set, the function call and the
+   read, contaminating every row after the first.
+3. **The pack was racing the test.** `push/player` takes no arguments — it reads the *global*
+   scratch scores `#power` / `#vy` / `#ppx10` / `#ppz10`, which are exactly the globals `push/core`
+   writes for every real push. The test bird is a chicken, the pack farts chickens, so the live
+   pack overwrote all four in the window between the test setting them and calling the function. A
+   `power 0` control came back as `[0.253, 0.2, 0.046]` — a real push, with `#vy` stomped from 0
+   to 20. The fix is `#enabled 0` for the section, so `tick.mcfunction` returns before
+   `world/tick` and nothing calls `push/core`. `push/player` does not consult `#enabled`, so the
+   real code path is still exercised.
+4. The control now runs **first** and aborts the section on failure. A row that must be zero and
+   is not means the harness is uncontrolled, and every other row is then noise — so it must not be
+   printed as one more result.
+
+Point 3 is worth carrying to any other test that pokes pack internals: the pack's scratch globals
+are not a stable interface, and anything that writes them from outside while the server is running
+is a race.
 
 #### #25 — the source tree was not in git, so the "backup" was empty  · **FIXED**
 Found while starting the v25 integration, when the source directory turned out to be absent. This

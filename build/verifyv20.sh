@@ -129,7 +129,14 @@ echo
 BY=$((CY+6))
 "${R[@]}" "fill $CX $((BY-1)) $CZ $CX $((BY+1)) $CZ minecraft:air" >/dev/null 2>&1
 "${R[@]}" "setblock $CX $((BY-1)) $CZ minecraft:stone" >/dev/null 2>&1
-"${R[@]}" "summon minecraft:chicken $CX $BY $CZ {Tags:[\"fart.kbtest\"]}" >/dev/null 2>&1
+# NoAI/Invulnerable because push/player writes Motion and the bird is then
+# physically pushed: it drifts, falls, and accumulates gravity between the
+# scoreboard set, the function call and the read. That produced a table where
+# even "power 0 (must be exactly zero)" returned [0.275, 0.2, 0.025] - i.e. the
+# whole table was noise. A row that must be zero and is not means the harness is
+# uncontrolled, so that row is now run FIRST and aborts on failure instead of
+# being printed as one more result.
+"${R[@]}" "summon minecraft:chicken $CX $BY $CZ {Tags:[\"fart.kbtest\"],NoAI:1b,NoGravity:1b,Invulnerable:1b,PersistenceRequired:1b}" >/dev/null 2>&1
 N=$(count_sel "$KB")
 echo "  test birds: $N  (must be 1)"
 if [ "$N" != "1" ]; then
@@ -137,38 +144,89 @@ if [ "$N" != "1" ]; then
   "${R[@]}" "kill $KB" 'forceload remove 300 300' >/dev/null 2>&1
   exit 1
 fi
+
+# WHY THE PACK MUST BE FROZEN FOR THIS SECTION
+# ----------------------------------------------
+# push/player does not take arguments. It reads the GLOBAL scratch scores
+# #power / #vy / #ppx10 / #ppz10 - which are exactly the globals push/core writes
+# for every real push. The test bird is a chicken, the pack farts chickens, so
+# while the pack is ticking it overwrites all four of those scores in the window
+# between this script setting them and this script calling the function. That is
+# not a flake: it is a guaranteed race, and the symptom is a "power 0" control
+# coming back as a real push (I chased Y=0.2 for three runs before reading the
+# source, where #vy10 = #vy * 10 with no possible source other than #vy).
+#
+# #enabled 0 makes tick.mcfunction return before world/tick, so nothing calls
+# push/core and the scratch scores stay put. push/player itself does not consult
+# #enabled, so calling it directly still exercises the real code path.
+# The trap puts the pack back even if this section aborts.
+freeze_pack()   { "${R[@]}" 'scoreboard players set #enabled fart.var 0' >/dev/null 2>&1; }
+unfreeze_pack() { "${R[@]}" 'scoreboard players set #enabled fart.var 1' >/dev/null 2>&1; }
+freeze_pack
+trap 'unfreeze_pack' EXIT
+
+# Put the bird back on the mark with no velocity, so every case starts from an
+# identical state. Without this the cases contaminate each other: the bird is
+# still moving from the previous push while the next one is computed from its
+# new, drifted position.
+reset_bird() {
+  "${R[@]}" "tp $KBL $CX $BY $CZ" \
+            "data modify entity $KBL Motion set value [0.0d,0.0d,0.0d]" >/dev/null 2>&1
+}
+
 "${R[@]}" 'execute store result score #px fart.var run data get entity @e[type=minecraft:chicken,tag=fart.kbtest,limit=1] Pos[0] 10' >/dev/null 2>&1
 echo "  bird Pos[0] in tenths: $("${R[@]}" 'scoreboard players get #px fart.var' 2>/dev/null | tail -1 | sed 's/.*: //')  (summon at $CX -> 300.5 -> 3005)"
-echo "  sanity, a push with no source offset is the zero case:"
 echo
 printf '  %-36s %-22s %s\n' "case" "expected" "actual"
-kb() {  # <label> <source_x10> <power> <vy> <expected>
-  kbg "$1" "$2" "$CX10" "$3" "$4" "$5"
-}
+
 # kbg takes the source Z separately. A diagonal case needs BOTH axes offset; the
 # first version of this test hardcoded the source Z to the bird's own Z, so
 # "diagonal 3+3" had dz=0 and was secretly identical to the straight case - it
 # dutifully reported [0.35, 0.2, 0.0] and looked like a pack bug.
 kbg() {  # <label> <source_x10> <source_z10> <power> <vy> <expected>
+  reset_bird
   "${R[@]}" "scoreboard players set #power fart.var $4" \
             "scoreboard players set #vy fart.var $5" \
             "scoreboard players set #ppx10 fart.var $2" \
             "scoreboard players set #ppz10 fart.var $3" >/dev/null 2>&1
   "${R[@]}" "execute as $KBL run function fartpack:push/player" >/dev/null 2>&1
-  printf '  %-36s %-22s %s\n' "$1" "$6" "$(read_motion)"
+  LAST_MOTION=$(read_motion)
+  printf '  %-36s %-22s %s\n' "$1" "$6" "$LAST_MOTION"
 }
+kb() { kbg "$1" "$2" "$CX10" "$3" "$4" "$5"; }   # straight: source Z == bird Z
+
+# --- CONTROL FIRST. ------------------------------------------------------------
 # vx = (power/100) * dx/(dx+dz); source due west => dx>0 => push +X.
+echo "  control first: power 0 must produce an exactly zero vector."
+kbg "CONTROL power 0 (must be zero)"  $((CX10-30)) $CX10 0 0 "[0.0, 0.0, 0.0]"
+# NBT prints doubles with a `d` suffix, and the server is free to render 0.0 as
+# 0.0d or 0d, so compare on the numeric components rather than the exact text.
+is_zero_motion() {
+  echo "$1" | tr -d ' ' | grep -qE '^\[(-?0(\.0+)?d?)(,-?0(\.0+)?d?){2}\]$'
+}
+if is_zero_motion "$LAST_MOTION"; then
+  echo "  control OK - harness is controlled, the rows below mean something."
+else
+  echo "  ABORT: control returned '$LAST_MOTION', not an exact zero."
+  echo "         The bird is not in a controlled state, so every row below would be"
+  echo "         noise reported as a result. Fix the harness, do not read on."
+  "${R[@]}" "kill $KB" 'forceload remove 300 300' >/dev/null 2>&1
+  exit 1
+fi
+echo
+echo "  real cases:"
 kb "3 blocks, power 35 (normal)"      $((CX10-30))  35 20 "[0.35, 0.2, 0.0]"
 kb "3 blocks, power 90 (legendary)"   $((CX10-30))  90 40 "[0.9, 0.4, 0.0]"
 kb "12 blocks, power 12 (long range)" $((CX10-120)) 12 20 "[0.12, 0.2, 0.0]"
 kbg "diagonal 3+3, power 35"          $((CX10-30)) $((CX10-30)) 35 20 "[0.175, 0.2, 0.175]"
 kbg "diagonal 3-3, power 35"          $((CX10-30)) $((CX10+30)) 35 20 "[0.175, 0.2, -0.175]"
-kb "power 0 (must be exactly zero)"   $((CX10-30))  0 0  "[0.0, 0.0, 0.0]"
+kb "control again (must still be zero)" $((CX10-30)) 0 0 "[0.0, 0.0, 0.0]"
 
 echo
 echo "  Same cases through push/one (the mob path) for comparison. push/one divides"
 echo "  straight to an integer, so note the long-range row."
 one() {  # <label> <source_x10> <power> <vy>
+  reset_bird
   "${R[@]}" "scoreboard players set #power fart.var $3" \
             "scoreboard players set #vy fart.var $4" \
             "scoreboard players set #ppx fart.var $(( $2 / 10 ))" \
@@ -178,6 +236,11 @@ one() {  # <label> <source_x10> <power> <vy>
 }
 one "push/one 3 blocks, power 35"   $((CX10-30))  35 20
 one "push/one 12 blocks, power 12" $((CX10-120)) 12 20
+
+# Back to normal before anything else runs. Idempotent, and the EXIT trap is
+# still there in case a later section aborts.
+unfreeze_pack
+trap - EXIT
 
 echo
 echo "  Player routing (the one player-specific line, and why the bird stood in):"
