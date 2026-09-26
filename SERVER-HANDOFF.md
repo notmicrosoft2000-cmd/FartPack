@@ -4,15 +4,32 @@
 > paste-into-your-chat-window onboarding doc. When the two disagree, the wiki
 > wins, because it is what lives next to the machine:
 >
-> - `~/homelab/server-info/00-README.md` — index
-> - `~/homelab/server-info/AI-REGISTRY.md` — **check this first: is another AI
+> - `~/homelab/wiki/00-README.md` — index (18 numbered pages)
+> - `~/homelab/wiki/registry/README.md` — **check this first: is another AI
 >   already on this box, and what do they own?**
-> - `~/homelab/server-info/AI-RULES.md` — binding norms
-> - `~/homelab/server-info/11-ENVIRONMENT-TRAPS.md` — the traps below, in full
-> - `~/homelab/server-info/JOURNAL.md` — latest state
+> - `~/homelab/wiki/registry/AI-<N>.md` — the binding norms, one page per AI
+> - `~/homelab/wiki/05-ENVIRONMENT-TRAPS.md` — the traps below, in full
+> - `~/homelab/wiki/journals/SHARED-STATE-LOG.md` — latest state
+> - `~/homelab/wiki/journals/AI-<N>/JOURNAL.md` — your own narrative
 >
-> AI-1 is registered as the FartPack AI. Journals are per-AI
-> (`~/homelab/AI-<N>-JOURNAL.md`); the shared log is for state changes.
+> AI-1 is registered as the FartPack AI. AI-2 is **free** — claim it with
+> `~/homelab/wiki/bin/register-ai.sh`.
+>
+> **The old `~/homelab/server-info/` was archived** to
+> `~/homelab/wiki/archive/server-info-223821/`. Pointer stubs were left at the
+> old paths so existing references still resolve, but the stubs are not the
+> wiki — do not add to them.
+>
+> **The tools, so you do not reinvent them** — all in `~/homelab/wiki/bin/`:
+>
+> | tool | what it does |
+> |---|---|
+> | `register-ai.sh` | claim a permanent AI id (AI-2 is free) |
+> | `ailock.sh` | `take` / `drop` / `show` / `guard` / `steal` the `ai.lock` |
+> | `journal-append.sh` | append journal entries; 4 gates, refuses credentials |
+> | `check-entry.py` | the credential gate on its own |
+> | `test-entry-gate.sh` | 7 tests — **run it if you change any tool** |
+> | `test-append-gates.sh` | proves the two refusals, by `md5sum` |
 
 You are working on a private homelab Minecraft server. Everything you need to
 connect is below. Read the whole thing once before your first command; most of
@@ -33,7 +50,7 @@ not from Minecraft.
 | Datapacks | `~/crafty/servers/<ID>/world/datapacks/` |
 | Logs | `~/crafty/servers/<ID>/logs/latest.log` |
 | RCON helper | `/tmp/rcon.py` on the server |
-| Journals | `~/homelab/AI-JOURNAL.md` and `~/homelab/server-info/JOURNAL.md` |
+| Journals | `~/homelab/wiki/journals/AI-<N>/JOURNAL.md` + `journals/SHARED-STATE-LOG.md` |
 
 Installed and **not yours to change**: Fabric mods (`antixray`, `collective`,
 `dynamiclights`, `easyauth`, `vanish`, `fabric-convention-tags-v2`,
@@ -125,13 +142,36 @@ are not installed** — use `python3 -c "import zipfile; ..."`.
    properties, *then* restart, *then* confirm a player can connect.
 5. **Back up before you change a datapack or `server.properties`.** One file,
    one timestamped copy, next to the original.
-6. **Log what you changed** in `~/homelab/AI-JOURNAL.md` and
-   `~/homelab/server-info/JOURNAL.md`. Append by **copying a file in**, never a
-   heredoc — markdown is full of backticks and `$`, and a heredoc will mangle it
-   or silently append nothing.
-7. **A check that prints a failure and then continues is not a check.** If you
+6. **Log what you changed, always** — in
+   `~/homelab/wiki/journals/AI-<N>/JOURNAL.md` (your narrative) and
+   `~/homelab/wiki/journals/SHARED-STATE-LOG.md` (state deltas the other AIs need
+   to see). Use the tool, not a shell redirect:
+   ```bash
+   AI_ID=AI-<N> ~/homelab/wiki/bin/journal-append.sh
+   ```
+   It reads your entry from `/tmp/append-ai.md` and `/tmp/append-server.md`,
+   takes the `ai.lock`, and runs four gates: the lock, a credential check, a
+   duplicate sentinel on the heading, and proof that the files actually grew.
+   Write the entry into a file and `scp` it — never a heredoc, and never pass
+   journal prose as a shell argument. Markdown is full of backticks and `$`;
+   the remote shell is fish, and `:` is a *command separator* there, so a heading
+   passed as an argument arrives truncated.
+7. **Put an `ai.lock` in any folder you are writing into**, and if you find one
+   already there, **wait until it is removed**:
+   ```bash
+   AI_ID=AI-<N> ~/homelab/wiki/bin/ailock.sh take  ~/homelab/wiki "why"
+   AI_ID=AI-<N> ~/homelab/wiki/bin/ailock.sh drop ~/homelab/wiki "done"
+   ```
+   Lock the **topmost** folder you are writing into, not the innermost. Read the
+   rules at `~/homelab/wiki/registry/AI-<N>.md` before your first change — the
+   lock is an advisory courtesy flag, not a mutex, and the rules around `steal`
+   and staleness are not optional.
+8. **A check that prints a failure and then continues is not a check.** If you
    write a verification step, make it exit non-zero and actually branch on it.
    This has also caused a real incident here.
+9. **Assert that your subject exists before you assert anything about it.** A
+   missing script exits `127`, which is indistinguishable from a successful
+   refusal. Compare `md5sum`, not line count. See wiki page 05, trap 20.
 
 ---
 

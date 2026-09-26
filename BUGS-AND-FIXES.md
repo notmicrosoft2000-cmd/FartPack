@@ -1,7 +1,8 @@
 # FartPack — Bug Catalogue & Fix Plan
 
 > Living document. Read this before touching the pack.
-> Companion to the server journals (`~/homelab/AI-JOURNAL.md`, `~/homelab/server-info/JOURNAL.md`).
+> Companion to the server wiki and journals (`~/homelab/wiki/` — index at
+> `00-README.md`, per-AI journals under `journals/AI-<N>/`).
 > Last updated: 2026-09-26. **v19 deployed**; **v20 built, pending deploy** (Passes A–D shipped,
 > Pass E is the three player-reported fixes #22–#24).
 > Source of truth and history: https://github.com/notmicrosoft2000-cmd/FartPack
