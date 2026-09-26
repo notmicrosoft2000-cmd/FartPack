@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# verifycfg.sh - machine-verify the v26 admin config layer.
+# verifycfg.sh - machine-verify the admin config layer.
 #
-# Runs on the server AFTER the v26 reload, with 0 players online.
+# Runs on the server AFTER the reload, with 0 players online.
 #
 # The obvious objection to testing a per-player feature during a 0-player gate is
 # that there is no player to configure. That is not quite true, and the loophole
@@ -51,11 +51,37 @@ expect() {
   fi
 }
 
-echo "=== 0. do the functions exist at all? (a dropped macro fails everything) ==="
+echo "=== 0a. did ANY pack function fail to load this reload? ==="
+# This is the check that should have caught #30 on the v26 deploy. A function
+# that will not load makes its whole feature silently do nothing - in v26,
+# player/apply_gas failed, so the gas bar stopped filling for every player and
+# nothing anywhere said so except one ERROR line naming the file.
+SRVLOG="$HOME/crafty/servers/241920ac-55ce-46c6-aa2f-c42ebf290457/logs/latest.log"
+BADLOAD=$(grep -c 'Failed to load function fartpack' "$SRVLOG" 2>/dev/null || true)
+if [ "${BADLOAD:-0}" -ne 0 ]; then
+  printf '  FAIL %s pack function(s) failed to load:\n' "$BADLOAD"
+  grep 'Failed to load function fartpack' "$SRVLOG" 2>/dev/null \
+    | sed 's/.*Failed to load/Failed to load/' | sort -u | sed 's/^/        /'
+  FAIL=$((FAIL+1))
+else
+  echo "  ok   0 pack functions failed to load"
+fi
+
+echo
+echo "=== 0b. do the admin functions exist? ==="
+# "Loaded" and "ran without error" are DIFFERENT questions and this used to
+# conflate them, grepping for 'error' to decide both. A macro called with no
+# arguments answers "Missing arguments to function X", which proves the file
+# loaded AND that it is a macro - so it distinguishes the two cases exactly,
+# without guessing at error wording. Whether the function then does the right
+# thing is sections 1-5's job, not this one's.
 for f in rate every cap rel pow reset show; do
-  if python3 /tmp/rcon.py "function fartpack:admin/$f $T 1" 2>&1 | grep -qi 'Unknown function\|error'; then
+  out=$(python3 /tmp/rcon.py "function fartpack:admin/$f" 2>&1)
+  if printf '%s' "$out" | grep -qi 'Unknown function'; then
     printf '  FAIL admin/%-6s did not load\n' "$f"
     FAIL=$((FAIL+1))
+  elif printf '%s' "$out" | grep -qi 'Missing arguments'; then
+    printf '  ok   admin/%-6s loaded, is a macro (wants arguments)\n' "$f"
   else
     printf '  ok   admin/%-6s loaded\n' "$f"
   fi

@@ -7,3 +7,7 @@ src/
 
 # OS cruft
 .DS_Store
+
+# Python bytecode from py_compile
+__pycache__/
+*.pyc

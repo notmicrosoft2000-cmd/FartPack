@@ -28,6 +28,25 @@ fi
 
 echo
 echo "=== installing ==="
+# The lint/deploy handshake. lint.sh writes the hash of the zip it actually
+# parse-tested; if the zip has changed since, the gate validated a build that is
+# not the one about to go live and installing it would make the gate a lie.
+# This is the #30 failure, mechanically prevented rather than remembered.
+if [ -f /tmp/linted.sha1 ]; then
+  LINTED=$(cut -d' ' -f1 /tmp/linted.sha1)
+  NOW=$(sha1sum /tmp/fartpack-latest.zip | cut -d' ' -f1)
+  echo "  linted : $LINTED"
+  echo "  on disk: $NOW"
+  if [ "$LINTED" != "$NOW" ]; then
+    echo "  ABORT: the zip changed after it was linted. Re-run lint.sh, then deploy."
+    exit 1
+  fi
+  echo "  lint/deploy handshake OK - this is the build that was parse-tested."
+else
+  echo "  ABORT: no /tmp/linted.sha1 - the pack was never linted. Run lint.sh first."
+  exit 1
+fi
+
 cp /tmp/fartpack-latest.zip "$SRV/world/datapacks/fartpack.zip"
 GOT=$(sha1sum "$SRV/world/datapacks/fartpack.zip" | cut -d' ' -f1)
 WANT=$(sha1sum /tmp/fartpack-latest.zip | cut -d' ' -f1)
@@ -37,13 +56,41 @@ echo "  expected : $WANT"
 
 echo
 echo "=== enable + reload ==="
+# Record where the log ends BEFORE the reload. A reload does NOT rotate
+# latest.log (only a boot does), so a whole-file grep counts failures from
+# previous deploys forever and there is no way to tell a fresh break from an
+# old one. Everything below is scoped to lines this reload actually added.
+LOGLINES=$(wc -l < "$SRV/logs/latest.log" 2>/dev/null || echo 0)
+# Clear the "config layer is verified" flag BEFORE the reload, not after. If this
+# deploy breaks the config layer, the flag must already be 0 so that nothing
+# waiting on it acts on a stale 1. Clearing afterwards would leave a window where
+# a failed deploy still looks verified. crown.sh waits on this flag.
+python3 /tmp/rcon.py 'scoreboard players reset #cfgok fart.var' >/dev/null 2>&1 || true
 python3 /tmp/rcon.py 'datapack enable "file/fartpack.zip"' 'datapack list' 'reload'
 
 sleep 6
 echo
-echo "=== log: any failed function loads? (whole file is valid for a RELOAD) ==="
-echo "  count: $(grep -c 'Failed to load function fartpack' "$SRV/logs/latest.log" || true)"
-grep -iE 'Failed to load|Error loading|Unknown block|problems? (were|was) found|Unknown registry key' "$SRV/logs/latest.log" | grep -v quickdeath | tail -20 || echo "  (clean)"
+echo "=== log: any failed function loads since THIS reload? ==="
+NEWLOG=$(tail -n "+$((LOGLINES+1))" "$SRV/logs/latest.log" 2>/dev/null || true)
+BAD=$(printf '%s' "$NEWLOG" | grep -c 'Failed to load function fartpack' || true)
+echo "  failed function loads: $BAD"
+printf '%s' "$NEWLOG" \
+  | grep -iE 'Failed to load|Error loading|Unknown block|problems? (were|was) found|Unknown registry key' \
+  | grep -v quickdeath | tail -20 || echo "  (clean)"
+
+# This is the check that should have stopped #30 on the v26 deploy. It PRINTED
+# "count: 2" - naming two files that would not load at all - and the deploy
+# continued regardless, while the parse lint that should have caught them first
+# was reading a stale tarball. Three independent things failed to stop a broken
+# pack going live, so this one aborts.
+if [ "${BAD:-0}" -ne 0 ]; then
+  echo
+  echo "  ABORT: $BAD function(s) failed to load in the pack just installed."
+  echo "  It is live but INCOMPLETE - affected features silently do nothing."
+  echo "  Fix and redeploy; do not report this version as working."
+  exit 1
+fi
+echo "  all functions loaded."
 
 echo
 echo "=== state after reload ==="

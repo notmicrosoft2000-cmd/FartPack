@@ -36,7 +36,7 @@ $execute if score $(arg0) fart.cap matches ..19 run scoreboard players set $(arg
 $execute if score $(arg0) fart.cap matches 501.. run scoreboard players set $(arg0) fart.cap 500
 $scoreboard players operation $(arg0) fart.leg = $(arg0) fart.cap
 $scoreboard players operation $(arg0) fart.warn = $(arg0) fart.cap
-$scoreboard players operation $(arg0) fart.warn /= #rc_four
+$scoreboard players operation $(arg0) fart.warn /= #rc_four fart.var
 $execute if score $(arg0) fart.pressure > $(arg0) fart.cap run scoreboard players operation $(arg0) fart.pressure = $(arg0) fart.cap
 $execute as $(arg0) run function fartpack:admin/resync_bar
 $execute store result score #rc_echo fart.var run scoreboard players get $(arg0) fart.cap

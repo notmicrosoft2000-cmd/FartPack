@@ -777,6 +777,94 @@ player the moment this system shipped.
 
 ---
 
+### #30 — v26 shipped two files that could not load · **FIXED in v27**
+
+**Symptom.** v26 deployed, the lint said `PARSE FAILURES: 0`, and the deploy script printed
+`=== DONE. v26 deployed. ===`. Then the gas bar silently stopped filling for **every player**, and
+`/function fartpack:admin/rate` did nothing. Two files had failed to load:
+
+```
+[17:06:12] [Server thread/ERROR]: Failed to load function fartpack:admin/recalc
+[17:06:12] [Server thread/ERROR]: Failed to load function fartpack:player/apply_gas
+  java.lang.IllegalArgumentException: Whilst parsing command on line 28: Unknown or incomplete
+  command. See below for error at position 104: ...e += #famt<--[HERE]
+```
+
+**Cause.** Eight lines, all the same mistake:
+
+```
+scoreboard players operation @s fart.pressure += #famt
+```
+
+`scoreboard players operation` takes **five** fields — target, target objective, operator, source,
+**source objective** — and stops at four. The existing pack code gets this right everywhere
+(`*= #dx fart.var`); I dropped the trailing objective on every line I wrote for #29. In
+`player/apply_gas` that is the line that puts gas in the bar, so the bar stopped filling pack-wide.
+`admin/recalc` had the same fault twice, and `admin/cap` once.
+
+The error message is close to useless for this: the caret points at the **end** of the line, so it
+names neither the missing field nor which line is at fault, and "Unknown or incomplete command" does
+not suggest arity. The only clue was the one ERROR line per file naming the file itself.
+
+**Why four separate checks missed it.** This is the part worth remembering, because the bug was not
+really the missing field — it was that **every gate reported the failure and then continued anyway**:
+
+| Check | What it did | Why it did not stop the deploy |
+|---|---|---|
+| `lint.sh` parse lint | `PARSE FAILURES: 0` | It untarred **`/tmp/v25src.tar.gz`**, a leftover from the abandoned v25 attempt, while `deploy.sh` installed `/tmp/fartpack-latest.zip`. It faithfully validated v25. |
+| `lintpack.py` exit code | printed the count | Never called `sys.exit`, so `deployauto.sh`'s `if [ $rc -ne 0 ]` could not see a parse failure at all. |
+| `deploy.sh` log check | printed `count: 2`, naming both files | Printed and carried on. |
+| `deployauto.sh` | printed `DONE. v26 deployed.` | Treated `verifycfg.sh`'s **29 failing checks** as a warning. |
+
+A gate that reports a failure and then proceeds is worse than no gate, because it is trusted. Three
+of those four were mine and all four were in the same script chain I had extended that session.
+
+**Also worth recording:** `lintpack.py` substituted only `$(pid)`, so the new `$(arg0)`/`$(arg1)`
+lines were sent to the server with a literal `$(arg0)` in place. That *parses* — `$(arg0)` is a legal
+scoreboard holder name — which is exactly why `admin/cap`'s arity error hid: the line had the right
+shape and the wrong field count, and a literal token did not reveal it.
+
+**Fixes, layered so one is not enough again:**
+
+- `build/checkcmds.py` — **new, static, no server.** Checks field counts for the scoreboard
+  subcommands whose arity is fixed. Catches this class in milliseconds and cannot be stale.
+- `build/pack.sh` — **new.** Builds the zip deterministically (sorted entries, pinned 1980 timestamps,
+  pinned mode and deflate level). The hash was being quoted as if it identified a build; nothing
+  enforced reproducibility. Verified by building twice and comparing.
+- `build/lint.sh` — lints **the zip that gets installed**, not a source tree, and writes
+  `/tmp/linted.sha1`.
+- `build/deploy.sh` — refuses to install if the zip's hash moved since the lint, so a rebuild landing
+  between gate and copy cannot slip through. Also now **aborts** if any pack function failed to load
+  since *this* reload, scoped by recording the log length beforehand (a reload does not rotate
+  `latest.log`; only a boot does, so a whole-file grep counts old failures forever).
+- `build/lintpack.py` — substitutes every `$(…)`, not just `$(pid)`, and **exits non-zero** on
+  `PARSE FAILURES > 0` so the result can reach a branch.
+- `build/verifycfg.sh` — new section 0a fails on any `Failed to load function fartpack`. Section 0b
+  no longer conflates "did not load" with "errored at runtime": a macro called with no arguments
+  answers `Missing arguments to function X`, which distinguishes the two exactly.
+- `build/deployauto.sh` — a `verifycfg.sh` failure is now a **failed deploy** (exit 1), not a warning
+  on a successful one.
+- `build/crown.sh` — waits on **`#cfgok`**, set only after `verifycfg.sh` passes, instead of on
+  `#loaded == 26`. This matters: on v26 the config layer was *half* alive — `admin/rate` and friends
+  all worked while `apply_gas` was dead — so a version-number check would have gone green, crowned
+  YOSHIKURO1, and announced a 2× bar on a bar that could not fill at all.
+- `build/journal-append.sh` — had a stray `done` from an earlier refactor and **did not parse at
+  all**. Found by syntax-checking every script in `build/` rather than only the ones being changed.
+
+**v27 is a repair release, not a feature release.** It bumps the gate to 27 so `bootstrap` re-runs,
+and adds one line to it: re-derive `fart.leg` and `fart.warn` for *every* player tagged
+`fart.has_cfg`, not just the unconfigured ones. v26's broken `recalc` meant `admin/defaults` set the
+tag after calling a function that did not exist, leaving players tagged as configured with no
+thresholds — and re-running `defaults` would not repair them, because the tag now says they are
+fine. Self-healing the half-written state is the whole point of that line.
+
+**Still not verifiable at 0 players:** `player/apply_gas` itself, which is the function that broke. It
+needs an entity for `@s`, so no test at 0 players can cover it. Its correctness rests on
+`checkcmds.py` and the load-time abort in `deploy.sh`. That is a real gap, stated rather than papered
+over.
+
+---
+
 ## 2b. v25 — the weather and event port
 
 An independent fork of this pack (v18-era, pre-Pass-A) was found with a lot of new content and none
@@ -855,28 +943,48 @@ The weather and event work is in v26 unchanged.
 | **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
 | **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **done**. | **done in v19/v20** |
 | **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **shipped in v20, all three machine-verified** |
-| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27); player-vs-player knockback restored (#28); lifesteal datapack removed; per-player config layer (#29). | **v26, lint-clean, pending deploy** |
+| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27); player-vs-player knockback restored (#28); lifesteal datapack removed; per-player config layer (#29); v26's two unloadable files repaired and the four gates that let them through made into real gates (#30). | **v27, lint-clean, pending deploy** |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
-1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the
-   live server parser. Must report `PARSE FAILURES: 0`.
-2. Check every macro file: each command line must contain `$(`. Check only the files that are
-   *invoked* `with storage` — not the callers that invoke them.
+
+Run the static gates first. They need no server, so they cannot be stale, and they are fast:
+
+```bash
+bash build/pack.sh                        # deterministic zip; prints its sha1
+python3 build/checkcmds.py fartpack-latest   # scoreboard arity  (#30)
+python3 build/checkmacro.py fartpack-latest  # macro rule
+python3 build/checkrefs.py fartpack-latest   # dangling / uncallable functions
+python3 build/simfill.py                     # fill-rate arithmetic
+```
+
+Then the server-side gate, which is `build/deployauto.sh <version>` and does the rest in order:
+
+1. Wait for 0 players across a 2-poll, 30-second window, then re-confirm immediately before acting.
+2. `build/lint.sh` parse-checks **every** command line in **the zip that is about to be installed**
+   against the live server parser, and writes `/tmp/linted.sha1`. It exits non-zero on
+   `PARSE FAILURES > 0`. (It used to untar a hardcoded leftover tarball — see #30. If you ever see
+   `linting sha1:` missing, the gate is not running and nothing below can be trusted.)
 3. If you touched a `tags/block/*.json`, re-verify every value with `build/checkblocks.py`.
-4. Deploy → `datapack enable "file/fartpack.zip"` → `reload`.
-5. `grep 'Failed to load' logs/latest.log` **for the new line range only** — old errors stay in the
-   file forever and a bare `grep -c` will make you think you broke something. Must show only the
-   pre-existing lifesteal `quickdeath` error. (Valid for a reload only — see gotcha 10.)
+4. `build/deploy.sh` refuses to install if the zip's hash moved since step 2, copies it, then
+   `datapack enable "file/fartpack.zip"` + `reload`.
+5. `grep 'Failed to load' logs/latest.log` **scoped to lines added by this reload** — the script
+   records the log length first, because a reload does not rotate the file and a bare `grep -c`
+   counts old failures forever. Any pack function in that window **aborts the deploy**. (Valid for
+   a reload only — see gotcha 10.)
 6. `scoreboard players get #loaded fart.var` to confirm the version gate fired.
-7. **Confirm 0 players online *before* reloading, and actually enforce it.** During the v19 deploy
-   the check was printed but not asserted, and a player was online for the reload. `deploy.sh`
-   now aborts, and refuses to deploy if it cannot read the player count at all.
-8. Because of `pause-when-empty-seconds`, step 7's "0 players" also means the pack will not tick
+7. `build/verifycfg.sh` exercises the real admin macros on a fake scoreboard holder. A failure here
+   makes the whole deploy report **FAILED** and leaves `#cfgok` at 0. `build/crown.sh` waits on
+   `#cfgok`, so a broken config layer cannot be announced as a working buff.
+8. Because of `pause-when-empty-seconds`, step 1's "0 players" also means the pack will not tick
    afterwards. Runtime-verify with `build/smoke.sh`, which drives `fartpack:tick` by hand over
    RCON and works while the server is paused.
 9. `tick query` for a real per-tick timing number.
 10. For a **restart** (needed for any `resource-pack-sha1` change), use `build/postrestart.sh` and
     `build/craftyrestart.py` — and expect to re-verify the whole new `latest.log`, not a window.
+
+**The rule underneath all of these:** a check that reports a failure and then lets the deploy
+continue is not a check. Every step above now *stops* the deploy. If you add a gate, make sure it
+propagates a non-zero exit status, or it is decoration.
 
 ## 4. Revert
 Every pass is a standalone zip in `backups/fartpack/vNN.zip`, and the pre-session v16 is also at

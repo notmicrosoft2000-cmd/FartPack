@@ -39,24 +39,38 @@ get() {
   fi
 }
 
-echo "=== waiting for #loaded to be 26 (max 5400s) ==="
+# Wait on EVIDENCE THE FEATURE WORKS, not on a version number.
+#
+# This used to wait for `#loaded == 26`, which is the wrong thing to wait for and
+# fails in the most dangerous direction. On v26 the config layer was half alive:
+# admin/rate, admin/pow and the rest all loaded and worked, while
+# player/apply_gas - the function that actually moves gas into the bar - failed
+# to load entirely. A version-number check would have gone green, crowned the
+# player, and announced a 2x bar on a bar that could not fill at all.
+#
+# deployauto.sh therefore sets #cfgok to 1 only after verifycfg.sh has actually
+# passed, and clears it to 0 before every reload. If the config layer is broken
+# in any way, that flag is 0 and this script refuses - which is the correct
+# outcome, because the alternative is telling a player their buff is live when
+# it is not.
+echo "=== waiting for the verified config layer (max 5400s) ==="
 t=0
 while [ "$t" -lt 5400 ]; do
-  v=$(get '#loaded' fart.var)
-  if [ "$v" = "26" ]; then
-    echo "  v26 is live."
+  ok=$(get '#cfgok' fart.var)
+  if [ "$ok" = "1" ]; then
+    echo "  config layer verified at v$(get '#loaded' fart.var)."
     break
   fi
   if [ $((t % 300)) -eq 0 ]; then
     online=$(rcon list | grep -oE 'There are [0-9]+ of' | grep -oE '[0-9]+' | head -1)
-    echo "  $t: #loaded=$v, ${online:-?} players online"
+    echo "  $t: v$(get '#loaded' fart.var), #cfgok=${ok:-UNSET}, ${online:-?} players online"
   fi
   sleep 15
   t=$((t+15))
 done
 
-if [ "$(get '#loaded' fart.var)" != "26" ]; then
-  echo "TIMEOUT: v26 never went live. Nothing was changed, nothing was announced."
+if [ "$(get '#cfgok' fart.var)" != "1" ]; then
+  echo "TIMEOUT: the config layer never verified. Nothing was changed, nothing was announced."
   exit 2
 fi
 

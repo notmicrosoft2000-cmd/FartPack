@@ -75,10 +75,12 @@ echo
 echo "############ PRE-DEPLOY LINT GATE ############"
 bash /tmp/lint.sh
 rc=$?
-# lint.sh exits non-zero on a bad block tag or an unreadable player count. The
-# parse lint itself only reports in its output, so check that explicitly too.
+# lint.sh exits non-zero on a bad block tag, an unreadable player count, or a
+# parse failure. All three are hard stops.
 if [ $rc -ne 0 ]; then
-  echo "ABORT: lint.sh exited $rc (block tag invalid, or player count unreadable)."
+  echo "ABORT: lint.sh exited $rc."
+  echo "      (bad block tag, player count unreadable, or PARSE FAILURES > 0 above)"
+  echo "      Nothing was deployed. Fix and re-run."
   exit 1
 fi
 
@@ -140,12 +142,21 @@ ls -1 "$HOME/crafty/removed-datapacks/removed-from-datapacks/" 2>/dev/null \
   | sed 's/^/  /' || echo "  MISSING: no backup dir - lifesteal is gone with no way back."
 
 echo
-echo "############ CONFIG LAYER (v26) ############"
+echo "############ CONFIG LAYER ############"
+CFGOK=0
 bash /tmp/verifycfg.sh
 rc=$?
 if [ $rc -ne 0 ]; then
   echo "WARNING: verifycfg.sh reported failures. The pack is deployed but the"
   echo "admin config layer is NOT verified - treat the /function commands as suspect."
+  echo "#cfgok stays 0, so crown.sh will not announce a buff that is not working."
+else
+  # Only now is the config layer known to work. This flag is the single piece of
+  # evidence crown.sh waits on, so it is set here and nowhere else - after a
+  # passing verification, and never optimistically.
+  python3 /tmp/rcon.py 'scoreboard players set #cfgok fart.var 1' >/dev/null 2>&1
+  echo "#cfgok set to 1 - config layer verified."
+  CFGOK=1
 fi
 
 echo
@@ -154,7 +165,25 @@ echo "  * player-vs-player knockback (#28) - needs a second player as the target
 echo "  * admin/reset, admin/show, admin/resync_bar - they start with 'execute as'"
 echo "  * the bar filling at the new rate, and the bossbar resizing"
 echo "  * the knockback distance changing with admin/pow"
+echo "  * player/apply_gas itself, which is the one function that broke in v26."
+echo "    It needs an entity for @s, so no test at 0 players can cover it. Its"
+echo "    correctness rests on checkcmds.py (static arity) and the load-time"
+echo "    'Failed to load function' abort in deploy.sh."
 echo "  Ask a player to crouch-fart next to another player to confirm #28."
 
+# A verifycfg failure is a FAILED deploy, not a caveat on a successful one. On
+# v26 this printed 29 failing checks and then finished with "DONE. v26
+# deployed.", which is how a pack with two unloadable files got reported as
+# shipped and then sat broken while a player was online. The pack is already
+# live at this point, so there is nothing to roll back - but the exit status and
+# the last line both have to say it did not work.
+if [ "$CFGOK" -ne 1 ]; then
+  echo
+  echo "=== FAILED. v$VER is live but the config layer is NOT verified. ==="
+  echo "=== Do not report this version as working. Fix and redeploy.      ==="
+  exit 1
+fi
+
 echo
-echo "=== DONE. v$VER deployed. ==="
+echo "=== DONE. v$VER deployed, config layer verified. ==="
+exit 0

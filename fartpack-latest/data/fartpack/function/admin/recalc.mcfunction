@@ -29,5 +29,5 @@
 scoreboard players set #rc_four fart.var 4
 scoreboard players operation @s fart.leg = @s fart.cap
 scoreboard players operation #rc_tmp fart.var = @s fart.cap
-scoreboard players operation #rc_tmp fart.var /= #rc_four
-scoreboard players operation @s fart.warn = #rc_tmp
+scoreboard players operation #rc_tmp fart.var /= #rc_four fart.var
+scoreboard players operation @s fart.warn = #rc_tmp fart.var

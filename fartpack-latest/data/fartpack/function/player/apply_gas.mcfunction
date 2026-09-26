@@ -25,11 +25,19 @@
 # feature, because it looks exactly like the player having deliberately set
 # themselves to 0. The `unless ..0` form treats unset as stock and only an
 # explicit 0 as frozen.
-execute unless score @s fart.rate matches ..0 run scoreboard players operation @s fart.pressure += #famt
-execute if score @s fart.rate matches 2.. run scoreboard players operation @s fart.pressure += #famt
-execute if score @s fart.rate matches 3.. run scoreboard players operation @s fart.pressure += #famt
-execute if score @s fart.rate matches 4.. run scoreboard players operation @s fart.pressure += #famt
-execute if score @s fart.rate matches 5.. run scoreboard players operation @s fart.pressure += #famt
+#
+# `+= #famt fart.var` - the trailing `fart.var` is the SOURCE objective and is
+# not optional. `scoreboard players operation` takes five fields
+# (target, target objective, operator, source, source objective) and stops at
+# four with "Unknown or incomplete command", pointing the caret at the end of the
+# line. v26 shipped without it on these five lines: the whole file failed to
+# load, so the gas bar silently stopped filling for everyone, and the only
+# evidence was one ERROR line in the log naming the file. See #30.
+execute unless score @s fart.rate matches ..0 run scoreboard players operation @s fart.pressure += #famt fart.var
+execute if score @s fart.rate matches 2.. run scoreboard players operation @s fart.pressure += #famt fart.var
+execute if score @s fart.rate matches 3.. run scoreboard players operation @s fart.pressure += #famt fart.var
+execute if score @s fart.rate matches 4.. run scoreboard players operation @s fart.pressure += #famt fart.var
+execute if score @s fart.rate matches 5.. run scoreboard players operation @s fart.pressure += #famt fart.var
 # Clamp to this player's cap rather than to the old constant 100. Guarded on
 # `fart.cap matches 1..` because an `execute if score` against an unset holder
 # fails outright, and a player mid-upgrade would otherwise have their bar stop

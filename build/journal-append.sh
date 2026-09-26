@@ -59,8 +59,6 @@ for pair in "$HEADER_AI:AI-JOURNAL.md" "$HEADER_SV:server-info/JOURNAL.md"; do
   # backticks must have survived as real backticks, not as escaped \` sequences
   [ "${esc:-0}" -eq 0 ] || { echo "  FAIL: $f has escaped backticks"; exit 1; }
 done
-echo "OK"
-done
 
 echo
 echo "=== new section headers now present ==="

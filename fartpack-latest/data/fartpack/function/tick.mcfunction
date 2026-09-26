@@ -34,7 +34,12 @@
 # rate and knockback can be set per player with /function. This costs one extra
 # command per player per tick (bar/tick_gas_bar has to hand the cap to the
 # bossbar macro) and two comparisons per gas pass; it adds no entity selectors.
-execute unless score #loaded fart.var matches 26 run function fartpack:core/bootstrap
+# v27: repairs v26, which shipped with two files that failed to load
+# (player/apply_gas and admin/recalc, both from a missing source objective in a
+# `scoreboard players operation`) and so silently stopped the gas bar filling.
+# No behavioural change beyond that; the version bump exists so bootstrap
+# re-derives the cap-relative thresholds for anyone v26 left half-configured.
+execute unless score #loaded fart.var matches 27 run function fartpack:core/bootstrap
 scoreboard players enable @a fart.toggle
 execute as @a[scores={fart.toggle=1..}] run function fartpack:core/do_toggle
 execute as @a[scores={fart.toggle=1..}] run scoreboard players set @s fart.toggle 0

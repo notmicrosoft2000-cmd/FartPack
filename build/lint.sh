@@ -5,10 +5,40 @@
 # the pack's own lines include setblock/give/kill/tag.
 set -euo pipefail
 
-SRC=/tmp/fartpack-latest
+# The zip that deploy.sh installs. Lint THIS, not a source tree.
+#
+# It used to untar /tmp/v25src.tar.gz, a leftover from an earlier attempt, and
+# deploy.sh installed /tmp/fartpack-latest.zip. Nothing tied the two together, so
+# on v26 the lint faithfully reported `PARSE FAILURES: 0` - of v25 - while the
+# v26 zip it went on to install had two files that would not load at all
+# (#30). The lint was not broken; it was checking a different artifact, and its
+# output was trusted because it said the right words.
+#
+# A pre-deploy gate that can validate the wrong build is worse than no gate,
+# because it manufactures false confidence. So the source is now derived from
+# the exact file that gets installed, and the hash is printed here and compared
+# against deploy.sh's "installed:" line.
+ZIP=/tmp/fartpack-latest.zip
+SRC=/tmp/lintsrc
 
-tar xzf /tmp/v25src.tar.gz -C /tmp
-[ -d "$SRC" ] || { echo "FATAL: $SRC did not unpack"; exit 1; }
+[ -f "$ZIP" ] || { echo "FATAL: $ZIP not found - nothing to lint"; exit 1; }
+LINTED=$(sha1sum "$ZIP" | cut -d' ' -f1)
+echo "linting sha1: $LINTED"
+echo "  (deploy.sh installs this same file; its 'installed:' hash must match)"
+
+rm -rf "$SRC"
+mkdir -p "$SRC"
+# python3 zipfile, not unzip: the server has neither zip nor unzip installed
+# (checked), and a lint that dies on a missing tool would be another gate that
+# silently stops gating.
+python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP" "$SRC"
+[ -d "$SRC/data" ] || { echo "FATAL: $ZIP did not unpack to a data/ dir"; exit 1; }
+echo "unpacked to $SRC"
+
+# Record what was linted. deploy.sh refuses to install if the zip's hash has
+# moved since this file was written, which closes the window where a rebuild
+# lands between the gate passing and the copy happening.
+printf '%s  %s\n' "$LINTED" "$ZIP" > /tmp/linted.sha1
 
 # --- player gate -------------------------------------------------------------
 # MUST be an array. `R=$(python3 /tmp/rcon.py)` makes R the single string
@@ -59,4 +89,18 @@ fi
 # --- function parse lint -----------------------------------------------------
 echo
 echo "=== function parse lint ==="
+# Explicit rather than relying on `set -e` so the reason is legible in the log.
+# lintpack.py exits 1 when PARSE FAILURES > 0, and that status has to reach
+# deployauto.sh, which branches on it and refuses to deploy.
+set +e
 python3 /tmp/lintpack.py "$SRC"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  echo
+  echo "FATAL: parse lint failed (exit $rc). The functions listed above do not"
+  echo "       parse against this server version. Do NOT deploy - a function"
+  echo "       that will not load makes its feature silently do nothing."
+  exit "$rc"
+fi
+echo "lint OK"

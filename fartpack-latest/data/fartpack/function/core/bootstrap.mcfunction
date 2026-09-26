@@ -68,5 +68,15 @@ scoreboard objectives setdisplay sidebar fart.total
 # above is not enough on a world that already has players, and a version bump is
 # what makes this line run exactly once per upgrade rather than every tick.
 execute as @a[tag=fart.has_pid,tag=!fart.has_cfg] run function fartpack:admin/defaults
+# ...and re-derive the two cap-relative thresholds for EVERY configured player,
+# not just the unconfigured ones. admin/defaults is idempotent, but it is not
+# self-healing: it sets the tag AFTER calling admin/recalc, so when recalc failed
+# to load in v26 the tag was still applied and the player was left with no
+# fart.leg and no fart.warn. Re-running defaults would not fix them either,
+# because the tag now says they are configured. This line does.
+#
+# Only on a version bump, so it costs nothing per tick, and it repairs exactly
+# the half-written state v26 could produce.
+execute as @a[tag=fart.has_cfg] run function fartpack:admin/recalc
 data modify storage fartpack:data macro set value {}
-scoreboard players set #loaded fart.var 26
+scoreboard players set #loaded fart.var 27
