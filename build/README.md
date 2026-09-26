@@ -14,10 +14,63 @@ heredocs — hence script files rather than inline commands).
 | `verify.sh` | Post-deploy: lists every `Failed to load function` **with its timestamp** (so historical errors are not mistaken for new ones) and confirms the version gate fired. |
 | `postrestart.sh` | Same idea, but for a **restart**: vanilla rotates `latest.log` on boot, so line-number marks are invalid. Checks the whole new file and asserts `Done (...)` is present. |
 | `checkblocks.py <ids-file>` | Asks the live server whether each block id exists. **Required** after editing any `tags/block/*.json` — one unknown value silently kills the whole tag. |
+| `checkrefs.py <pack-dir>` | **Static, no server needed.** Every `run function` target resolves to a real file, and every function is reachable from `load`/`tick`, an advancement reward, or the `MANUAL` list. Catches a mistyped function name, which is *not* a parse error — the pack loads and the branch silently never runs. |
+| `genblocknames.py <pack-dir>` | Regenerates `world/block_name.mcfunction` from `tags/block/utility.json`. Run by `build.sh` on every build, so the lookup can never drift from the tag. |
+| `lint.sh` | The full gate in one shot: asserts 0 players online (and **aborts if the count is unreadable**), flattens `tags/block/*.json` into an id list for `checkblocks.py`, then runs `lintpack.py`. |
+| `stresstest.sh` | End-to-end test of the #22 crouch-strain fix against a real entity. |
+| `verifyv20.sh` | Verifies #23 (block names, one lookup per block, with a control) and #24 (knockback `Motion` against a tagged chicken) and proves the `tp` machinery is gone. |
 | `smoke.sh` | Drives `fartpack:tick` by hand ~70 times over RCON and checks the 30-tick cycle wraps and nothing errors. The only way to runtime-test while the server is paused. |
 | `livecheck.sh` | Reads a counter twice and prints `ADVANCING` or `FROZEN`, so a paused server stops looking like a broken one. |
 | `ticktest.sh` | Is the pack ticking right now, and did the last reload log anything bad? |
 | `reaptest.sh` | Arms `#rc` to 199 and proves `core/reap` wipes stale `fart.gtick` rows and resets itself. |
+
+## Ways a test here has lied to me
+
+Every one of these produced output that looked like a real result. A test that
+cannot fail is worse than no test, because it gets reported as a pass.
+
+- **`R` must be an array.** `R="python3 /tmp/rcon.py"` then `"$R" 'cmd'` passes the
+  whole string as ONE argv entry, so the shell looks for an executable literally
+  named `python3 /tmp/rcon.py`. Every call fails. Unquoted `$R` accidentally works;
+  quoted `"$R"` silently does nothing. Use `"${R[@]}"`.
+- **A contaminated selector fails silently.** `@e[...],limit=1` puts `limit`
+  *outside* the brackets, so it parses as an unlimited selector and errors. Worse,
+  writing the explanation *inside* the quotes
+  (`KBL="@e[...],limit=1]   # limit goes inside"`) makes the prose part of the
+  selector. Both scripts now assert the selector is clean before doing anything.
+- **Unquoted chunks fail silently.** `execute if block` in an unloaded chunk is a
+  no-op with no error, and with 0 players the world pauses and chunks unload 60s
+  after the last player leaves. Every scripted check must run inside a
+  `forceload`ed chunk.
+- **`setblock` lying about success.** It reports "Could not set the block" when it
+  is a no-op, and with an unknown id it fails *leaving the previous block in
+  place*. A control case that never places anything just re-reports the last loop
+  iteration and looks like a lookup bug. Confirm with `execute if block`.
+- **The subject must be stationary.** `player/stress` decides "did you move?" by
+  comparing `Pos*100` against `fart.lastx`/`lastz`. A live chicken wanders, so it
+  moved between priming and the call, the movement branch fired, and stress came
+  back `1` instead of `0` — which is the fix *working*, reported as a failure. Use
+  `NoAI:1b`.
+- **Do not assert absolute health on a mob.** `summon ... {Health:20.0f}` does not
+  give a chicken 20 HP; `max_health` clamps it to 4 on the first tick, so every
+  read was `4.0` whether or not damage landed. Assert the delta from a baseline.
+- **A test case that cannot fail.** The #24 "diagonal" case hardcoded the source Z
+  to the bird's own Z, so `dz` was 0 and it was secretly identical to the straight
+  case. It dutifully reported the straight-case numbers.
+- **A range gate looks like an exact one.** `#scan_c matches 10..` runs on all 20
+  values in the range. Use exact tick numbers.
+- **`data modify <storage> <key> add value 1` is rejected** by this server. Build
+  a list and count commas.
+- **`say` is not captured by rcon.py.** Assert with `data get` or `scoreboard
+  players get` instead.
+- **Reading one RCON packet silently truncates.** `rcon.py` drains to the type-2
+  terminator; do not hand-roll a single `recv`.
+- **A `#` mid-line is not a comment.** It is a scoreboard fake-player name
+  (`#scan_c`, `#loaded`). Only a `#` in the leading whitespace starts a comment.
+  Stripping from the first `#` deletes the entire 30-tick cycle from your own
+  analysis — this is a real bug that shipped inside `checkrefs.py` until the
+  first run reported the most-called functions in the pack as dead.
+
 
 ## Resource pack
 

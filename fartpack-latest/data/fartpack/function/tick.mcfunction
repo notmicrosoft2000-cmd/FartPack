@@ -6,15 +6,15 @@
 #           what makes new scoreboard objectives reach an already-existing world.
 #
 #   lines 2-5   player toggle (/trigger fart.toggle)
-#   line  6     world/tick - mob/block timers, gas clouds, reaper
+#   line  6     world/tick - mob/block timers, gas clouds, reaper, fart rain
 #   lines 7-8   first-join boss bar setup
-#   lines 9-17  the 30-tick cycle (#scan_c counts 1..30 then wraps to 0). Each
+#   lines 9-20  the 30-tick cycle (#scan_c counts 1..30 then wraps to 0). Each
 #           gate is an EXACT tick number, not a range - a range like `matches
 #           1..9` runs the branch on all nine ticks, which would keep the total
 #           command count identical to the old single-blob scan and only move
 #           the spike around:
 #                 1     blocks/scan_low  + world/etick   (49 block checks)
-#                 10    blocks/scan_mid                    (49 block checks)
+#                 10    blocks/scan_mid  + rain/event countdowns
 #                 20    blocks/scan_high                   (49 block checks)
 #                 10/20/30 player/fill_gas                 (unchanged 10-tick cadence)
 #                 10/20  world/etick (entity set refresh, ~10 ticks apart)
@@ -23,8 +23,12 @@
 #           3x cut. Cost: a utility block can take up to 1.5s to be noticed
 #           (markers still tick on 15-90s timers, so invisible) and the tracked
 #           entity set is up to 1s stale.
-#   lines 18-19 per-tick player stuff
-execute unless score #loaded fart.var matches 20 run function fartpack:core/bootstrap
+#   lines 21-22 per-tick player stuff
+#
+# v25: adds the weather and random-event systems (fart rain, gas surge, cyclone,
+# blessing, swarm) ported in from an independent fork. Version numbers 21-24 were
+# never used; see BUGS-AND-FIXES.md.
+execute unless score #loaded fart.var matches 25 run function fartpack:core/bootstrap
 scoreboard players enable @a fart.toggle
 execute as @a[scores={fart.toggle=1..}] run function fartpack:core/do_toggle
 execute as @a[scores={fart.toggle=1..}] run scoreboard players set @s fart.toggle 0
@@ -43,6 +47,12 @@ execute if score #scan_c fart.var matches 30 as @e[type=minecraft:marker,tag=far
 execute if score #scan_c fart.var matches 10 as @a[name=!"Server"] at @s run function fartpack:player/fill_gas
 execute if score #scan_c fart.var matches 20 as @a[name=!"Server"] at @s run function fartpack:player/fill_gas
 execute if score #scan_c fart.var matches 30 as @a[name=!"Server"] at @s run function fartpack:player/fill_gas
+# Weather and event countdowns. These add 30 per call to compensate for this
+# cycle's 30-tick period, so the 5-10 minute rain delay and the 20-40 minute
+# event delay are unchanged. Placed on tick 10 rather than 30 because tick 30
+# already carries the marker reaper and a fill_gas pass.
+execute if score #scan_c fart.var matches 10 run function fartpack:world/fart_rain_tick
+execute if score #scan_c fart.var matches 10 run function fartpack:world/fart_event_tick
 execute if score #scan_c fart.var matches 30 run scoreboard players set #scan_c fart.var 0
 execute as @a[name=!"Server"] if score @s fart.slow matches 1.. run scoreboard players remove @s fart.slow 1
 execute as @a[name=!"Server"] at @s run function fartpack:player/press

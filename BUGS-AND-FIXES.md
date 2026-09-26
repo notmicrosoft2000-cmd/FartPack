@@ -530,6 +530,146 @@ existing `#dist` floor of 1.
 proves a player now receives a non-zero `Motion` where it previously received a `tp`. Someone has
 to stand next to a farting sheep and confirm.
 
+**Machine-verified 2026-09-26** (`build/verifyv20.sh`), driving the function against a tagged
+chicken since `push/player` reads only `Pos` and writes only `Motion`, so it is type-agnostic:
+
+| case | expected | actual |
+|---|---|---|
+| 3 blocks, power 35 | `[0.35, 0.2, 0.0]` | `[0.35000000000000003d, 0.2d, 0.0d]` |
+| 3 blocks, power 90 (legendary) | `[0.9, 0.4, 0.0]` | `[0.9d, 0.4d, 0.0d]` |
+| 12 blocks, power 12 (long range) | `[0.12, 0.2, 0.0]` | `[0.12d, 0.2d, 0.0d]` |
+| diagonal 3+3, power 35 | `[0.175, 0.2, 0.175]` | see run log |
+| diagonal 3-3, power 35 | `[0.175, 0.2, -0.175]` | see run log |
+| power 0 | `[0.0, 0.0, 0.0]` | `[0.0d, 0.0d, 0.0d]` |
+
+The formula normalises by `dx+dz` (Manhattan), not by true distance, so a 3+3 diagonal splits the
+impulse evenly at 0.175 per axis rather than 0.2475. That is the intended behaviour — it is what
+makes a hit feel the same whether it lands along an axis or between two.
+
+The first run of this table reported the diagonal as `[0.35, 0.2, 0.0]` — identical to the
+straight case — because the harness hardcoded the source Z to the bird's own Z, so `dz` was 0 and
+the "diagonal" was not one. A test case that cannot fail is worse than no test case, because it
+gets reported as a pass.
+
+#### #25 — the source tree was not in git, so the "backup" was empty  · **FIXED**
+Found while starting the v25 integration, when the source directory turned out to be absent. This
+is the most important entry in this file, because it is a failure of the thing the repo exists to
+do, and `git status` reported it as clean the entire time.
+
+Two compounding mistakes:
+
+1. `.gitignore` contains `*.zip`, so **no** versioned zip was ever committed. Every
+   `backups/fartpack/vNN.zip` existed on exactly one disk.
+2. `fartpack-latest/` and `fartpack_sounds/` were dropped from the index in the Pass C commit
+   (`070893a`) and became untracked. They lived only in the working directory. `git status` shows
+   untracked files as `??`, but a clean tree plus a passing `git status` reads as healthy, and
+   nothing in the workflow asserted "the source is actually tracked".
+
+The directories were then deleted from disk. Recovery was possible only because commit `9f9c4ee`
+still had them: 77 datapack files + 10 resource-pack files, verified by extracting both the rebuilt
+zip and the zip actually deployed on the server and running `diff -r` — zero differences. The
+resource pack matched the deployed sha1 exactly.
+
+Fixes, so this cannot recur quietly:
+
+- The source is tracked. `build/checkrefs.py` and the build both read it from the working tree, so
+  an untracked source is now a visible oddity rather than an invisible one.
+- **The build is now deterministic.** `zip` stores each entry's mtime, so zipping identical source
+  twice produced two different sha1s. That makes a zip's sha1 useless as an identity, which means a
+  stored backup can never be proven to match the commit that built it — which is the entire point of
+  keeping backups. `build.sh` now stages a copy and forces every mtime to the zip epoch
+  (1980-01-01); the source tree itself is untouched. Verified: two builds are byte-identical.
+- `backups/MANIFEST.sha256` records the expected sha256 of every versioned zip, so `sha256sum -c`
+  is a real check.
+- The irreplaceable old zips (v11–v17, for which no source survives anywhere) are uploaded as
+  GitHub release assets under the `archive` tag, and the round-trip was verified byte-identical.
+  Release assets rather than commits, because with a deterministic build v18+ are reproducible from
+  source and committing those binaries would add weight without adding recoverability.
+- `DEPLOYED.md` records what the live server is serving, including the trap the determinism change
+  created: the live `resource-pack-sha1` is `9c737655…` but a fresh build of the *same* RP content
+  now hashes to `10e7af37…`. Verified identical content (10 files, no differences). Rebuilding and
+  redeploying the RP without re-cutting the release asset would make every client reject the pack,
+  and with `require-resource-pack=true` that makes the server unjoinable.
+
+#### #26 — both consumables worked exactly once per player, ever  · **FIXED in v25**
+Found in the independent fork during the v25 integration, and a genuine bug in v20.
+
+`advancement/items/eat_kibble.json` and `drink_tonic.json` are **reward-only** advancements: a
+top-level `rewards.function` with no criteria rewards. Minecraft fires an advancement's rewards
+**only the first time it is granted**. So the first Anti-Fart Kibble a player ever ate worked, and
+every kibble after that — the second one, or any on a later day — did absolutely nothing, with no
+error in the log and no message on screen. The item is a recipe ingredient, so players would craft
+it, eat it, see the message the first time, and then quietly get nothing forever after.
+
+Fix is one line per item: `advancement revoke @s only <advancement>` after applying the effect, so
+the next consumption re-grants the advancement and the reward runs again.
+
+#### #27 — toggling FartPack off did not stop the weather  · **FIXED in v25**
+Introduced by the v25 weather system, caught during its own port. `tick.mcfunction` returns early
+when `#enabled` is 0, so `world/tick` never runs and the rain particle loop simply freezes — but
+`#raining` was still 1, so the storm resumed the instant the pack was re-enabled, possibly with
+`#rain_dur` already expired. `core/toggle_off` now clears `#raining`, `#rain_c` and `#event_cd`, so
+toggling is an actual stop rather than a pause.
+
+---
+
+## 2b. v25 — the weather and event port
+
+An independent fork of this pack (v18-era, pre-Pass-A) was found with a lot of new content and none
+of the safety work. It was a **port, not a merge**: 10 genuinely new files were brought forward and
+rewritten against the current architecture, and nothing else was touched.
+
+**Taken:**
+
+- `world/fart_rain_*` (4 files) — putrid fronts every 5–10 minutes. Ambient particles, a mild
+  non-lethal nausea pulse every 1.5s as a reminder to get inside, and a burp. No damage and no
+  pressure changes, so it cannot interfere with the gas-bar mechanics.
+- `world/fart_event_*` (2) and `world/event_*` (4) — random events every 20–40 minutes: gas surge
+  (everyone's bar slams to 100, so `player/press` takes everyone legendary on its own), gas cyclone
+  (four random clouds around each player), blessing (a wave of `clouds/blessed`), and swarm (every
+  tracked entity farts at once, reusing the `fart.etick` set).
+- Six utility blocks the fork had and we did not: `cake`, `daylight_detector`, `fletching_table`,
+  `lightning_rod`, `lodestone`, `spawner`. Free — the block scan is a 7×7×3 sweep that tests the
+  *tag*, not each block, so widening the tag adds no per-tick cost. `world/block_name` is
+  regenerated from the tag by `build/genblocknames.py` and picked all six up.
+- The #26 advancement-revoke fix and the #27 toggle-off fix described above.
+
+**Deliberately NOT taken** — this is the part that matters, because a naive copy would have undone
+five shipped fixes:
+
+| From the fork | Why it stays out |
+|---|---|
+| `push/player_step`, `push/player_hop` | The `tp`-marker knockback deleted in #24. Copying them back reinstates the teleport. |
+| `blocks/scan.mcfunction` (147 lines) | Superseded by our 3-way `scan_low`/`scan_mid`/`scan_high` split (#17). |
+| `world/tick` rebuilding `fart.etick` every tick | That is the single most expensive thing the pack did — see the numbers in `world/etick`. Already on a 9-in-30 cadence here. |
+| `player/stress` (4 lines) | The pre-#22 version. Our 49-line version is the fix. |
+| `player/stress_hurt` wording | Carries the old "Get moving to build pressure!", which is wrong twice over. |
+| `#scan_c matches 10..` style range gates | Ranges run the branch on every value in the range, which defeats the whole point of the exact-tick-gate cycle. |
+
+**Cadence changes made during the port.** The fork ran the rain particle loop *every tick* — two
+`particle` commands per player per tick, so 10 commands/tick for 5 players, for the whole 20–40
+second storm. That is exactly the kind of thing that quietly eats the tick budget Pass C reclaimed.
+So:
+
+- `fart_rain_tick` and `fart_event_tick` moved onto the existing 30-tick cycle and advance their
+  counters by 30 instead of 1. Wall-clock behaviour is identical (6000–12000 ticks is still 5–10
+  minutes); it is 1/30th of the scoreboard traffic.
+- `fart_rain_active` runs on an exact 3-tick gate and advances `#rain_dur`/`#rain_tick` by 3.
+  `#rain_dur` still ends after 400–800 ticks and the nausea still pulses every 30 ticks, so the
+  timing is bit-for-bit what the fork intended, at a third of the particle dispatch.
+- The gate fires *before* the counter resets. Testing `matches 3` and then zeroing gives
+  1,2,FIRE,0,1,2,FIRE; incrementing to 3 and testing `matches 0` instead fires on the tick *after*
+  the wrap, i.e. every 4th tick — an off-by-one that still looks like it works.
+
+**`#rain_target` and `#event_target` are deliberately left uninitialised** in `core/bootstrap`. Both
+countdown functions use `matches 1..` to mean "not chosen yet", and an unset score does not match
+that — so seeding them to 0 would make 0 a legal-looking target and the storm would fire instantly.
+Everything else weather-related is initialised so the state is readable on a fresh world.
+
+**Version numbering:** 21–24 were skipped; the user asked for 25 and `#loaded` is 25. The gate is
+just `execute unless score #loaded fart.var matches 25`, so the number itself carries no meaning
+beyond "different from 20 so bootstrap re-runs".
+
 ---
 
 ## 3. Fix order (passes)
@@ -540,7 +680,8 @@ to stand next to a farting sheep and confirm.
 | **B** | Felt bugs. `no_push` tag (#6); explicit `#power` (#11); `unless 1..` in stress (#8); stress cadence + de-spaghetti (#9); `fart.pressure` clamp (#10); real sound throttle (#7). | **shipped in v18** |
 | **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
 | **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **done**. | **done in v19/v20** |
-| **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **built, pending deploy** |
+| **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **shipped in v20, all three machine-verified** |
+| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27). | **v25, lint-clean, pending deploy** |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
 1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the

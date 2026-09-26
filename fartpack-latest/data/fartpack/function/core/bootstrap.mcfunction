@@ -21,7 +21,22 @@ scoreboard players set #noplayer fart.var 0
 scoreboard players set #scan_c fart.var 0
 scoreboard players set #rc fart.var 0
 scoreboard players set #stats fart.total 0
+# Weather and event state (v25). Every one of these is a fake player on fart.var.
+#
+# They are seeded here rather than left to first use so the state is readable with
+# a plain `scoreboard players get` on a fresh world. #rain_target and
+# #event_target are deliberately left UNSET: both countdown functions test
+# `matches 1..` to mean "not chosen yet", and an unset score does not match that,
+# so a 0 would be a legal-looking target and the storm would fire instantly.
+# Do not initialise them to 0.
+scoreboard players set #raining fart.var 0
+scoreboard players set #rain_c fart.var 0
+scoreboard players set #rain_cd fart.var 0
+scoreboard players set #rain_dur fart.var 0
+scoreboard players set #rain_tick fart.var 0
+scoreboard players set #event_cd fart.var 0
+scoreboard players set #event_pick fart.var 0
 execute unless score #enabled fart.var matches 0 run scoreboard players set #enabled fart.var 1
 scoreboard objectives setdisplay sidebar fart.total
 data modify storage fartpack:data macro set value {}
-scoreboard players set #loaded fart.var 20
+scoreboard players set #loaded fart.var 25
