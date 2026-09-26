@@ -1,1 +1,0 @@
-execute unless entity @e[type=minecraft:marker,tag=fart.blocktimer,distance=..0.5] run summon minecraft:marker ~ ~ ~ {Tags:["fart.blocktimer"]}

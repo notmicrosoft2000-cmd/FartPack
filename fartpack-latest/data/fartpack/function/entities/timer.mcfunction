@@ -1,1 +1,0 @@
-function fartpack:world/timer_tick

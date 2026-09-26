@@ -52,6 +52,37 @@ resource-pack-sha1=<sha1>
 Always download the URL back and compare sha1s **before** restarting. A resource pack URL that
 404s locks every player out of the server, and you find out at the worst possible moment.
 
+**Use `curl -fsSL`.** The `-L` is not optional. A GitHub release-asset URL answers `302` and
+redirects to `release-assets.githubusercontent.com`; without `-L`, curl writes the empty redirect
+body to disk, whose sha1 is `da39a3ee5e6b4b0d3255bfef95601890afd80709`. A naive preflight then
+concludes the pack is corrupt and blocks a deploy that was completely fine. Browsers and
+Minecraft both follow the redirect, so only a naive fetch is wrong. `build/rpdeploy.sh` does this
+correctly and prints the final URL.
+
+## Verifying changes on the live server
+
+`build/verifyv20.sh` and `build/stresstest.sh` (copy both to `/tmp/` on the server) exercise the
+features the parser cannot check. They are worth reading before trusting their output, because
+each of these produces a **confident wrong answer** rather than an error:
+
+- **The world is paused when 0 players are online, and chunks unload.** `execute if block` in an
+  unloaded chunk fails *silently*, which is indistinguishable from a broken lookup. Everything
+  runs inside a `forceload`ed chunk. This also means every liveness probe taken with 0 players
+  online is meaningless — use `build/smoke.sh`, which drives `fartpack:tick` by hand.
+- **`R="python3 /tmp/rcon.py"` then `"$R" 'cmd'` does nothing.** The quoted form passes the whole
+  string as one argv entry, so the shell looks for an executable literally named
+  `python3 /tmp/rcon.py`. It fails silently. Use an array: `R=(python3 /tmp/rcon.py)` / `"${R[@]}"`.
+- **`say` is not captured by rcon.py.** Broadcast chat never comes back in the response, so a
+  `run say` probe prints nothing whether it fired or not. Assert with `data get` or
+  `scoreboard players get`, which do round-trip.
+- **Only use block ids that exist on this server.** `minecraft:undyed_shulker_box` is not one of
+  them on 1.21.11. `setblock` with an unknown id fails *and leaves the previous block in place*,
+  so a lookup then correctly names the leftover block from the prior test case. Also, `setblock`
+  reports "Could not set the block" when it is a no-op, so its output is not evidence a block
+  exists — confirm with `execute if block ... run data modify storage ...`.
+- `data modify <storage> <key> add value 1` is rejected by this server; count entities by
+  appending to a list and counting the commas.
+
 ## Before deploying the datapack — always lint
 
 A datapack function whose lines fail to parse is **dropped entirely** and only complains in

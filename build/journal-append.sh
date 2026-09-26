@@ -7,6 +7,26 @@
 # this box is: write it locally, scp it, `cat >>`. No shell ever sees the text.
 set -euo pipefail
 H="$HOME/homelab"
+# Two headers, because the two journals are written independently and do NOT share
+# wording. Checking both for one string was wrong and reported a false failure on a
+# perfectly good append.
+HEADER_AI="${1:?usage: journal-append.sh '<AI-JOURNAL header>' '<server-info header>'}"
+HEADER_SV="${2:?usage: journal-append.sh '<AI-JOURNAL header>' '<server-info header>'}"
+
+# --verify re-runs only the checks, so a failed check can be re-examined without
+# appending the same entry a second time.
+if [ "${3:-}" = "--verify" ]; then
+  rc=0
+  for pair in "$HEADER_AI:AI-JOURNAL.md" "$HEADER_SV:server-info/JOURNAL.md"; do
+    hdr="${pair%%:*}"; f="${pair##*:}"
+    n=$(grep -cF "$hdr" "$H/$f" || true)
+    esc=$(grep -c '\\`' "$H/$f" || true)
+    echo "  $f: $n occurrence(s) of its header, ${esc:-0} stray backslash-backticks, $(wc -l < "$H/$f") lines total"
+    [ "${n:-0}" -eq 1 ] || { echo "  FAIL: $f header count is $n, expected 1"; rc=1; }
+    [ "${esc:-0}" -eq 0 ] || { echo "  FAIL: $f has escaped backticks"; rc=1; }
+  done
+  exit $rc
+fi
 
 # Record exactly where we started, so the operation is verifiable afterwards.
 before_ai=$(wc -l < "$H/AI-JOURNAL.md")
@@ -30,14 +50,16 @@ echo "  server-info/JOURNAL.md $before_sv -> $now_sv  (delta $((now_sv - before_
 [ "$now_ai" -gt "$before_ai" ] || { echo "  FAIL: AI-JOURNAL did not grow"; exit 1; }
 [ "$now_sv" -gt "$before_sv" ] || { echo "  FAIL: server-info JOURNAL did not grow"; exit 1; }
 
-for f in AI-JOURNAL.md server-info/JOURNAL.md; do
-  n=$(grep -c '2026-09-26 14:59 +0630' "$H/$f" || true)
-  echo "  $f: $n occurrence(s) of the new section header"
+for pair in "$HEADER_AI:AI-JOURNAL.md" "$HEADER_SV:server-info/JOURNAL.md"; do
+  hdr="${pair%%:*}"; f="${pair##*:}"
+  n=$(grep -cF "$hdr" "$H/$f" || true)
+  esc=$(grep -c '\\`' "$H/$f" || true)
+  echo "  $f: $n occurrence(s) of its header, ${esc:-0} stray backslash-backticks, $(wc -l < "$H/$f") lines"
   [ "${n:-0}" -eq 1 ] || { echo "  FAIL: $f header count is $n, expected 1"; exit 1; }
   # backticks must have survived as real backticks, not as escaped \` sequences
-  esc=$(grep -c '\\`' "$H/$f" || true)
-  echo "  $f: ${esc:-0} stray backslash-backticks"
   [ "${esc:-0}" -eq 0 ] || { echo "  FAIL: $f has escaped backticks"; exit 1; }
+done
+echo "OK"
 done
 
 echo

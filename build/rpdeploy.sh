@@ -18,7 +18,13 @@ fi
 
 echo
 echo "=== PREFLIGHT: the RP URL must still be alive and correct ==="
-curl -sS -o /tmp/pre.zip -w '  http=%{http_code} bytes=%{size_download}\n' "$RP_URL"
+# -L is REQUIRED and not optional. A GitHub release-asset URL answers 302 and
+# redirects to release-assets.githubusercontent.com. Without -L curl saves the
+# empty redirect body, whose sha1 is da39a3ee... (the sha1 of zero bytes), and the
+# check below then aborts on a URL that is actually perfectly fine. Browsers and
+# Minecraft both follow the redirect, so the URL works; only a naive fetch does
+# not. Do not "fix" this by removing the sha1 comparison.
+curl -fsSL -o /tmp/pre.zip -w '  http=%{http_code} bytes=%{size_download} final=%{url_effective}\n' "$RP_URL"
 GOT=$(sha1sum /tmp/pre.zip | cut -d' ' -f1)
 echo "  downloaded sha1: $GOT"
 echo "  expected  sha1: $RP_SHA"

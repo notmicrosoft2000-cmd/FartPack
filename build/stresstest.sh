@@ -9,39 +9,105 @@
 # In v19 both halves did nothing, because player/fill_gas refilled the bar within
 # 10 ticks and stress needs 20 empty ticks. We bypass fill_gas here by holding
 # pressure at 0, which is the exact state that was unreachable in practice.
+#
+# HARNESS NOTES, both learned the hard way:
+#
+#   * `R` MUST be an array, not a string. `R="python3 /tmp/rcon.py"` then
+#     `"$R" 'cmd'` passes the whole thing as ONE argv entry, so the shell looks
+#     for an executable literally named "python3 /tmp/rcon.py" and every call
+#     fails. Unquoted `$R` accidentally works; quoted `"$R"` silently does
+#     nothing. Use "${R[@]}".
+#   * The chunk is force-loaded. With 0 players the world is paused and chunks
+#     unload; a summon into an unloaded chunk fails, and a leftover entity in an
+#     unloaded chunk cannot even be killed - so it reappears the moment the chunk
+#     loads and every selector then matches two entities.
+#   * The uniqueness assert below is a genuine count, because `data get` with a
+#     bare selector just errors and a `limit=1` would hide the problem.
 set -uo pipefail
-R="python3 /tmp/rcon.py"
+R=(python3 /tmp/rcon.py)
 
-echo "=== setup: chicken, tagged as sneaking, empty tank, stress primed to 19 ==="
-$R \
-  'kill @e[type=minecraft:chicken,tag=fart.stresstest]' \
-  'summon minecraft:chicken 100 100 100 {Tags:["fart.stresstest","fart.sneak"],Health:20.0f}' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.lastx 10000' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.lastz 10000' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.stress 19' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.pressure 0' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.hurtt 1' \
-  'data get entity @e[type=minecraft:chicken,tag=fart.stresstest] Health' 2>&1 | tail -3
+CX=100; CY=100; CZ=100
+SEL="@e[type=minecraft:chicken,tag=fart.stresstest]"
+
+count_tagged() {  # -> number of tagged chickens
+  # `data modify <storage> <key> add value 1` is rejected by this server, so build
+  # a list instead and count the commas. `[]` means zero, `[1]` one, `[1, 1]` two.
+  "${R[@]}" 'data modify storage fartpack:msg n set value []' >/dev/null 2>&1
+  "${R[@]}" "execute as $SEL run data modify storage fartpack:msg n append value 1" >/dev/null 2>&1
+  local out
+  out=$("${R[@]}" 'data get storage fartpack:msg n' 2>/dev/null | tail -1)
+  case "$out" in
+    *'[]'*) echo 0 ;;
+    *'['*)  echo $(( $(printf '%s' "$out" | tr -cd ',' | wc -c) + 1 )) ;;
+    *)      echo "?" ;;
+  esac
+}
+
+"${R[@]}" 'forceload add 100 100' >/dev/null 2>&1
+
+echo "=== setup ==="
+"${R[@]}" "kill $SEL" 'fill 100 97 100 100 102 100 minecraft:air' >/dev/null 2>&1
+# kill can miss an entity that was unloaded a moment ago, so re-assert.
+"${R[@]}" "kill $SEL" >/dev/null 2>&1
+echo "  pre-existing tagged chickens: $(count_tagged)  (must be 0)"
+
+"${R[@]}" \
+  'setblock 100 99 100 minecraft:stone' \
+  "summon minecraft:chicken $CX $CY $CZ {Tags:[\"fart.stresstest\",\"fart.sneak\"],Health:20.0f}" \
+  "execute as $SEL run scoreboard players set @s fart.lastx 10000" \
+  "execute as $SEL run scoreboard players set @s fart.lastz 10000" \
+  "execute as $SEL run scoreboard players set @s fart.stress 19" \
+  "execute as $SEL run scoreboard players set @s fart.pressure 0" \
+  "execute as $SEL run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
+
+N=$(count_tagged)
+echo "  tagged chickens after summon: $N  (must be 1)"
+if [ "$N" != "1" ]; then
+  echo "  ABORT: the test needs exactly one bird; a duplicate makes every selector"
+  echo "         below match two entities and the results meaningless."
+  "${R[@]}" "kill $SEL" 'forceload remove 100 100' >/dev/null 2>&1
+  exit 1
+fi
+"${R[@]}" "data get entity $SEL,limit=1 Health" 2>&1 | tail -1
 
 echo
-echo "=== A. standing still (Pos 100,100,100 vs lastx/lastz 10000 -> delta 0) ==="
-$R \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run function fartpack:player/stress' \
-  'scoreboard players get @e[type=minecraft:chicken,tag=fart.stresstest] fart.stress' \
-  'data get entity @e[type=minecraft:chicken,tag=fart.stresstest] Health' 2>&1 | tail -6
+echo "=== A. standing still: Pos (100,100,100) == lastx/lastz (10000) => delta 0 ==="
+"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+echo "  fart.stress after = ${S##*: }   (expected 0 - it tripped and hurt)"
+echo "  Health             = $H   (expected < 20.0 - damage landed)"
 
 echo
-echo "=== B. now it MOVES: reset stress to 19, teleport 3 blocks, one tick ==="
-$R \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] at @s run tp @s ~3 ~ ~' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.stress 19' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.pressure 0' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run scoreboard players set @s fart.hurtt 1' \
-  'execute as @e[type=minecraft:chicken,tag=fart.stresstest] run function fartpack:player/stress' \
-  'scoreboard players get @e[type=minecraft:chicken,tag=fart.stresstest] fart.stress' \
-  'data get entity @e[type=minecraft:chicken,tag=fart.stresstest] Health' 2>&1 | tail -6
+echo "=== B. same bird, but it MOVED: re-prime stress, move 3 blocks, one tick ==="
+"${R[@]}" \
+  "execute as $SEL,limit=1 at @s run tp @s ~3 ~ ~" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.stress 19" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.pressure 0" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
+"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+echo "  fart.stress after = ${S##*: }   (expected 19 - movement cleared it, no damage)"
+echo "  Health             = $H   (expected 20.0 - unharmed)"
+
+echo
+echo "=== C. control: v19 behaviour, movement is irrelevant, the bar is what forgives ==="
+echo "  Same bird, re-primed, but with gas in the tank (pressure 100) and NOT moving."
+"${R[@]}" \
+  "execute as $SEL,limit=1 at @s run tp @s ~-3 ~ ~" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.lastx 999999" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.lastz 999999" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.stress 19" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.pressure 100" \
+  "execute as $SEL,limit=1 run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
+"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+echo "  fart.stress after = ${S##*: }   (expected 0 - forgiven, because the bar has gas)"
+echo "  Health             = $H   (expected 20.0 - a full bar forgives, by design)"
 
 echo
 echo "=== cleanup ==="
-$R 'kill @e[type=minecraft:chicken,tag=fart.stresstest]' >/dev/null 2>&1
-echo "  test chicken removed"
+"${R[@]}" "kill $SEL" 'fill 100 99 100 100 100 100 minecraft:air' 'forceload remove 100 100' >/dev/null 2>&1
+echo "  bird killed, platform cleared, chunk released"
