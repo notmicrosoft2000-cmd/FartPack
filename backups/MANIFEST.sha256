@@ -1,0 +1,11 @@
+# sha256 of every versioned FartPack artifact, one per line, for `sha256sum -c`.
+# Regenerate the datapack line with: ./build.sh vNN   (the build is deterministic,
+# so rebuilding the same commit must reproduce the same hash -- if it does not,
+# something non-reproducible has crept into the source or the build script.)
+# Verified against the deployed zips on 2026-09-26.
+05973d2cf8460406b85d72cf319c577cc4de673ae49b98fae0a9bf8c5c2c260e  fartpack/v15.zip
+9bba7ec398abcf0dbec553256d267c34c232be7fb1d245a6aa24d861b300fb4b  fartpack/v16.zip
+6ddf1601a6a261a17bb26ab54430d0cb204deeffcbf2618c166ccb9afead5d20  fartpack/v17.zip
+3b8d88ce4bb6fbac36006ab7e7896ad63a47c89081e85fe85d9fe72bd23248f3  fartpack/v18.zip
+c22b9883c7660d4cacc0146f3ad4e25893b6b2782aa4677a9174a55a8cf1639e  fartpack/v19.zip
+dee483c15688d3147710127da8e400eb9081751e4e1c45969da3b243dd065cfe  fartpack/v20.zip

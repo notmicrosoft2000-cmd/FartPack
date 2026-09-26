@@ -37,6 +37,7 @@ R=(python3 /tmp/rcon.py)
 CX=300; CY=100; CZ=300
 CX10=3005                      # the test bird lands at 300.5 -> 3005 in tenths
 KB="@e[type=minecraft:chicken,tag=fart.kbtest]"
+KBL="@e[type=minecraft:chicken,tag=fart.kbtest,limit=1]   # limit goes INSIDE the brackets"
 
 count_sel() {  # <selector> -> number of matching entities
   "${R[@]}" 'data modify storage fartpack:msg n set value []' >/dev/null 2>&1
@@ -50,9 +51,9 @@ count_sel() {  # <selector> -> number of matching entities
   esac
 }
 read_name()   { "${R[@]}" 'data get storage fartpack:msg name'   2>/dev/null | tail -1 | sed 's/.*contents: //'; }
-read_motion() { "${R[@]}" "data get entity $KB,limit=1 Motion"  2>/dev/null | tail -1 | sed 's/.*entity data: //'; }
-read_stress() { "${R[@]}" "scoreboard players get $KB,limit=1 fart.stress" 2>/dev/null | tail -1; }
-read_health() { "${R[@]}" "data get entity $KB,limit=1 Health"  2>/dev/null | tail -1 | sed 's/.*entity data: //'; }
+read_motion() { "${R[@]}" "data get entity $KBL Motion"  2>/dev/null | tail -1 | sed 's/.*entity data: //'; }
+read_stress() { "${R[@]}" "scoreboard players get $KBL fart.stress" 2>/dev/null | tail -1; }
+read_health() { "${R[@]}" "data get entity $KBL Health"  2>/dev/null | tail -1 | sed 's/.*entity data: //'; }
 
 # Confirm a block is really there. A setblock success message is not evidence:
 # the command is a silent no-op when the block already matches.
@@ -86,8 +87,15 @@ for b in minecraft:crafting_table minecraft:enchanting_table minecraft:jukebox \
   "${R[@]}" "execute positioned $CX $((CY+4)) $CZ run function fartpack:world/block_name" >/dev/null 2>&1
   printf '  %-32s placed=%-4s name=%s\n' "$b" "$present" "$(read_name)"
 done
-printf '  %-32s %-9s name=%s   <- not a utility block, must be generic\n' \
-  minecraft:stone "n/a" "$( "${R[@]}" "execute positioned $CX $((CY+4)) $CZ run function fartpack:world/block_name" >/dev/null 2>&1; read_name )"
+# The control case. This MUST actually place the block first: `setblock` with an
+# unknown id fails and leaves the previous block in place, so a control that never
+# places anything just re-reports the last loop iteration's block and looks like a
+# name-lookup bug.
+"${R[@]}" "setblock $CX $((CY+4)) $CZ minecraft:stone" >/dev/null 2>&1
+cpresent=$(confirm_block minecraft:stone $((CY+4)))
+"${R[@]}" "execute positioned $CX $((CY+4)) $CZ run function fartpack:world/block_name" >/dev/null 2>&1
+printf '  %-32s placed=%-4s name=%s   <- NOT a utility block, must be generic\n' \
+  minecraft:stone "$cpresent" "$(read_name)"
 
 echo
 echo "  The string macro splices that name into the sentence. Worth checking on its"
@@ -108,7 +116,12 @@ echo "  a selector in push/core, checked at the end of this section."
 echo
 "${R[@]}" "kill $KB" >/dev/null 2>&1
 "${R[@]}" "kill $KB" >/dev/null 2>&1
-"${R[@]}" "summon minecraft:chicken $CX $((CY+4)) $CZ {Tags:[\"fart.kbtest\"]}" >/dev/null 2>&1
+# The bird goes at CY+6, and its cell is cleared first. CY+4 is where the block-name
+# test just left a block, and summoning inside a solid block does not produce a bird.
+BY=$((CY+6))
+"${R[@]}" "fill $CX $((BY-1)) $CZ $CX $((BY+1)) $CZ minecraft:air" >/dev/null 2>&1
+"${R[@]}" "setblock $CX $((BY-1)) $CZ minecraft:stone" >/dev/null 2>&1
+"${R[@]}" "summon minecraft:chicken $CX $BY $CZ {Tags:[\"fart.kbtest\"]}" >/dev/null 2>&1
 N=$(count_sel "$KB")
 echo "  test birds: $N  (must be 1)"
 if [ "$N" != "1" ]; then
@@ -126,7 +139,7 @@ kb() {  # <label> <source_x10> <power> <vy> <expected>
             "scoreboard players set #vy fart.var $4" \
             "scoreboard players set #ppx10 fart.var $2" \
             "scoreboard players set #ppz10 fart.var $CX10" >/dev/null 2>&1
-  "${R[@]}" "execute as $KB,limit=1 run function fartpack:push/player" >/dev/null 2>&1
+  "${R[@]}" "execute as $KBL run function fartpack:push/player" >/dev/null 2>&1
   printf '  %-36s %-22s %s\n' "$1" "$5" "$(read_motion)"
 }
 # vx = (power/100) * dx/(dx+dz); source due west => dx>0 => push +X.
@@ -144,7 +157,7 @@ one() {  # <label> <source_x10> <power> <vy>
             "scoreboard players set #vy fart.var $4" \
             "scoreboard players set #ppx fart.var $(( $2 / 10 ))" \
             "scoreboard players set #ppz fart.var $(( CX10 / 10 ))" >/dev/null 2>&1
-  "${R[@]}" "execute as $KB,limit=1 run function fartpack:push/one" >/dev/null 2>&1
+  "${R[@]}" "execute as $KBL run function fartpack:push/one" >/dev/null 2>&1
   printf '  %-36s %s\n' "$1" "$(read_motion)"
 }
 one "push/one 3 blocks, power 35"   $((CX10-30))  35 20

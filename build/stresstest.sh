@@ -28,6 +28,7 @@ R=(python3 /tmp/rcon.py)
 
 CX=100; CY=100; CZ=100
 SEL="@e[type=minecraft:chicken,tag=fart.stresstest]"
+SELL="@e[type=minecraft:chicken,tag=fart.stresstest,limit=1]   # limit goes INSIDE the brackets"
 
 count_tagged() {  # -> number of tagged chickens
   # `data modify <storage> <key> add value 1` is rejected by this server, so build
@@ -68,26 +69,26 @@ if [ "$N" != "1" ]; then
   "${R[@]}" "kill $SEL" 'forceload remove 100 100' >/dev/null 2>&1
   exit 1
 fi
-"${R[@]}" "data get entity $SEL,limit=1 Health" 2>&1 | tail -1
+"${R[@]}" "data get entity $SELL Health" 2>&1 | tail -1
 
 echo
 echo "=== A. standing still: Pos (100,100,100) == lastx/lastz (10000) => delta 0 ==="
-"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
-S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
-H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+"${R[@]}" "execute as $SELL run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SELL fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SELL Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
 echo "  fart.stress after = ${S##*: }   (expected 0 - it tripped and hurt)"
 echo "  Health             = $H   (expected < 20.0 - damage landed)"
 
 echo
 echo "=== B. same bird, but it MOVED: re-prime stress, move 3 blocks, one tick ==="
 "${R[@]}" \
-  "execute as $SEL,limit=1 at @s run tp @s ~3 ~ ~" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.stress 19" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.pressure 0" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
-"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
-S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
-H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+  "execute as $SELL at @s run tp @s ~3 ~ ~" \
+  "execute as $SELL run scoreboard players set @s fart.stress 19" \
+  "execute as $SELL run scoreboard players set @s fart.pressure 0" \
+  "execute as $SELL run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
+"${R[@]}" "execute as $SELL run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SELL fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SELL Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
 echo "  fart.stress after = ${S##*: }   (expected 19 - movement cleared it, no damage)"
 echo "  Health             = $H   (expected 20.0 - unharmed)"
 
@@ -95,15 +96,15 @@ echo
 echo "=== C. control: v19 behaviour, movement is irrelevant, the bar is what forgives ==="
 echo "  Same bird, re-primed, but with gas in the tank (pressure 100) and NOT moving."
 "${R[@]}" \
-  "execute as $SEL,limit=1 at @s run tp @s ~-3 ~ ~" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.lastx 999999" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.lastz 999999" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.stress 19" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.pressure 100" \
-  "execute as $SEL,limit=1 run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
-"${R[@]}" "execute as $SEL,limit=1 run function fartpack:player/stress" >/dev/null 2>&1
-S=$("${R[@]}" "scoreboard players get $SEL,limit=1 fart.stress" 2>/dev/null | tail -1)
-H=$("${R[@]}" "data get entity $SEL,limit=1 Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
+  "execute as $SELL at @s run tp @s ~-3 ~ ~" \
+  "execute as $SELL run scoreboard players set @s fart.lastx 999999" \
+  "execute as $SELL run scoreboard players set @s fart.lastz 999999" \
+  "execute as $SELL run scoreboard players set @s fart.stress 19" \
+  "execute as $SELL run scoreboard players set @s fart.pressure 100" \
+  "execute as $SELL run scoreboard players set @s fart.hurtt 1" >/dev/null 2>&1
+"${R[@]}" "execute as $SELL run function fartpack:player/stress" >/dev/null 2>&1
+S=$("${R[@]}" "scoreboard players get $SELL fart.stress" 2>/dev/null | tail -1)
+H=$("${R[@]}" "data get entity $SELL Health" 2>/dev/null | tail -1 | sed 's/.*entity data: //')
 echo "  fart.stress after = ${S##*: }   (expected 0 - forgiven, because the bar has gas)"
 echo "  Health             = $H   (expected 20.0 - a full bar forgives, by design)"
 

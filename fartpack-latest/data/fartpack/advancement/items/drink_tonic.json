@@ -1,0 +1,17 @@
+{
+  "criteria": {
+    "requirement": {
+      "trigger": "minecraft:consume_item",
+      "conditions": {
+        "item": {
+          "predicates": {
+            "minecraft:custom_data": {"fartpack": "tonic"}
+          }
+        }
+      }
+    }
+  },
+  "rewards": {
+    "function": "fartpack:items/on_tonic"
+  }
+}
