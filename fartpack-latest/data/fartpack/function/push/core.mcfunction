@@ -1,3 +1,11 @@
+# push/core - radial knockback. Callers set #power, #vy and #radius, then run this.
+#
+# The four radius branches below look like four full entity scans, but they are
+# not: `execute if score ... run <selector>` only evaluates the selector when the
+# score matches, and #radius is set to exactly one of 3/4/5/12 by the callers, so
+# exactly ONE `@e` scan happens per push. Do not "optimise" this into a single
+# radius-12 pass - that would tag far-away entities as push targets and then
+# have to un-tag them, which is strictly more work.
 scoreboard players set #neg1 fart.var -1
 scoreboard players set #one fart.var 1
 scoreboard players set #ten fart.var 10

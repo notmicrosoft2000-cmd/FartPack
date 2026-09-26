@@ -19,8 +19,9 @@ scoreboard players enable @a fart.toggle
 scoreboard players set #neg1 fart.var -1
 scoreboard players set #noplayer fart.var 0
 scoreboard players set #scan_c fart.var 0
+scoreboard players set #rc fart.var 0
 scoreboard players set #stats fart.total 0
 execute unless score #enabled fart.var matches 0 run scoreboard players set #enabled fart.var 1
 scoreboard objectives setdisplay sidebar fart.total
 data modify storage fartpack:data macro set value {}
-scoreboard players set #loaded fart.var 18
+scoreboard players set #loaded fart.var 19

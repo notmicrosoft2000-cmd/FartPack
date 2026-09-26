@@ -15,6 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VER="${1:-latest}"
+VER="${VER#v}"          # accept both `19` and `v19`
 DP_SRC="fartpack-latest"
 RP_SRC="fartpack_sounds"
 DP_OUT="fartpack-latest.zip"

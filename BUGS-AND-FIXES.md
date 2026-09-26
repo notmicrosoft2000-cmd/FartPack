@@ -2,7 +2,7 @@
 
 > Living document. Read this before touching the pack.
 > Companion to the server journals (`~/homelab/AI-JOURNAL.md`, `~/homelab/server-info/JOURNAL.md`).
-> Last updated: 2026-09-26 14:15 local (UTC 07:45). v18 deployed.
+> Last updated: 2026-09-26. **v19 deployed** (Passes A + B + C shipped; Pass D partly done).
 
 ## 0. Ground rules / orientation
 
@@ -11,14 +11,17 @@
 | MC version | 1.21.11, Fabric Loader 0.19.5, Java 25 (server "Cleopatra", Crafty SID `241920ac-…0457`) |
 | Datapack path on server | `~/crafty/servers/241920ac-55ce-46c6-aa2f-c42ebf290457/world/datapacks/fartpack.zip` |
 | RP path (NOT on server) | Discord CDN URL in `server.properties`, sha1 pinned in `resource-pack-sha1` |
-| **Deployed now** | **v18** sha1 `a0b5d6f6d50b4ff9fc102fcc8a81b3ee12524acf` |
-| Deployed before this session | v16 sha1 `916e97718c131fc0e5b2f8688bd4da9a2afb711a` (local v17 was never shipped) |
-| Local backups | `backups/fartpack/v11 … v18.zip` |
+| **Deployed now** | **v19** sha1 `95604ea8fe102299c4672eade4c6983f34a4299a` |
+| Previous deploys | v18 `a0b5d6f6…` (Passes A+B), v16 `916e9771…` (pre-session) |
+| Local backups | `backups/fartpack/v11 … v19.zip` |
+| Git | `main`, first commit `a8c36e7`; source only, zips/mirror gitignored |
+| Build | `./build.sh [19|v19]` → `fartpack-latest.zip` + `backups/fartpack/vNN.zip` |
+| Pack version constant | `19`, in **both** `core/bootstrap.mcfunction` and `tick.mcfunction:1` |
 
-### Source-of-truth (bug #24)
-Three copies existed with no build script and no git. **Decision: `fartpack-latest/` is the single
-source of truth; `src/datapack/` is a byte-identical mirror** (`rsync -a --delete` after each edit).
-Build is `cd fartpack-latest && zip -rX ../fartpack-vNN.zip . -x '*.DS_Store'`. Formalise in Pass D.
+### Source of truth (bug #20 — now resolved)
+`fartpack-latest/` is the only place datapack code is edited; `fartpack_sounds/` is the only place
+the RP is edited. `src/` is a **generated** mirror that `build.sh` syncs — it is gitignored precisely
+because keeping two live copies is what caused the pre-v18 divergence. Everything is under git.
 
 ### Deployment gotchas (learned the hard way)
 1. Replacing `fartpack.zip` in place + `/reload` **can drop the pack from the enabled list**.
@@ -31,8 +34,25 @@ Build is `cd fartpack-latest && zip -rX ../fartpack-vNN.zip . -x '*.DS_Store'`. 
    log after a reload.
 5. Unrelated pre-existing noise: `lifesteal:utility/quickdeath` gamerule parse error (leave it),
    `Graves v3.0.0` pack (available, not enabled), `.DS_Store` warnings from lifesteal.
+6. **One bad value in a `tags/block/*.json` silently kills the whole tag.** A nonexistent block id
+   makes the tag file fail to parse, so `#fartpack:utility` vanishes, every utility block in the
+   world stops farting, and **nothing appears in the log**. Always verify block ids against the
+   live registry with `build/checkblocks.py` before editing any block tag. This is how
+   `minecraft:chain` was caught — it genuinely is **not** in this server's registry.
+7. **`pause-when-empty-seconds=60`.** The server stops ticking the world 60s after the last
+   player leaves (log: `Server empty for 60 seconds, pausing`). While paused, gametime, `#scan_c`
+   and every per-tick counter are frozen and the JVM sits at ~0% CPU — **the pack is not broken**.
+   Any "is the pack still ticking?" check performed with 0 players online is meaningless. To
+   runtime-test with nobody online, drive the entry point by hand over RCON instead
+   (`build/smoke.sh`); it works fine while paused.
+8. `tick query` is the cheap health check: it reports real per-tick timing
+   (0.5 ms avg, P99 0.7 ms, 20 TPS here) and is far more informative than a frozen counter.
+9. RCON replies longer than one packet are split across several packets. A client that reads only
+   one **silently truncates** output — `scoreboard objectives list` then looks like objectives are
+   missing when they are not. This cost real time during the v19 deploy; `build/rcon.py` now
+   drains until the type-2 empty terminator. Do not "simplify" it back.
 
-### Vanilla-behaviour facts established empirically this session (do not re-derive)
+### Vanilla-behaviour facts established empirically (do not re-derive)
 | Question | Answer | How verified |
 |---|---|---|
 | Is `actionbar` a Java command in 1.21.11? | **No.** Use `title <targets> actionbar <json>`. | RCON parse test |
@@ -43,6 +63,10 @@ Build is `cd fartpack-latest && zip -rX ../fartpack-vNN.zip . -x '*.DS_Store'`. 
 | Tag directory in 1.21.11 | `tags/entity_type/` is still correct (vanilla jar has it). Not renamed to `tags/entity/`. | vanilla jar listing |
 | Does a macro function accept a line with no `$(var)`? | **No** — `No variables in macro`, the whole function is dropped. | datapack load error |
 | Is function execution concurrent? | **No** — synchronous, `execute as` is sequential. Global scratch `#fake` players are therefore safe. | Mojang behaviour |
+| Is `scoreboard players list *` a way to enumerate rows? | **No** — `No relevant score holders could be found`. The bare `scoreboard players list` does list all ~110 holders, but it is a human-readable output command, so a datapack still cannot loop over them. Decides #14. | RCON parse test |
+| Does an unset score match `matches 0`? | **No.** Use `unless score X matches 1..`. | live probe |
+| Data pack vs resource pack format numbering | **Separate.** For 1.21.11: data pack **94**, resource pack **75**. RP `min_format:[75,0]/max_format:[75,0]` is correct — see the #19 correction. | minecraft.wiki |
+| Does `minecraft:chain` exist on this server? | **No.** Absent from the registry; `setblock` and `if block` both error. | `build/checkblocks.py` |
 
 ---
 
@@ -81,7 +105,10 @@ push/*  -> push/core -> push/player (marker hop; players) | push/one (Motion; mo
 ```
 
 ### Fake-player globals in use
-Persistent: `#loaded` (version int) `#enabled` `#neg1 #one #ten #twelve #noplayer #scan_c #stats #pid_counter #cloud #eb_tmp`
+All of these live in the `fart.var` objective (except `#stats`, which lives in `fart.total`).
+Persistent: `#loaded` (version int, currently **19**) `#enabled` `#neg1 #one #ten #twelve #noplayer
+#scan_c` (30-tick cycle, 1..30 then 0) `#rc` (gas reaper, fires at 200) `#stats` `#pid_counter
+#cloud #eb_tmp`
 Per-call scratch (safe: execution is synchronous): `#power #vy #radius #ppx #ppz #ppx10 #ppz10 #tx #tz
 #dx #dz #adx #adz #dist #dist10 #vx #vz #ux10 #uz10 #steps #hop #mx10 #mz10 #curx10 #curz10 #fpx #fpz #fdist`
 
@@ -94,7 +121,8 @@ Per-call scratch (safe: execution is synchronous): `#power #vy #radius #ppx #ppz
 
 ## 2. Bug catalogue
 
-Status: `FIXED-18` = fixed in the v18 deploy. `OPEN-C` / `OPEN-D` = deferred.
+Status: `FIXED-18` = fixed in the v18 deploy. `FIXED-19` = fixed in the v19 deploy.
+`OPEN-C` / `OPEN-D` = deferred.
 `WRONG` = an earlier hypothesis of mine that was **disproved**; kept so it is not re-investigated.
 
 ### TIER 0 — the pack was half-dead
@@ -250,54 +278,113 @@ The 1.21.11 vanilla jar still ships `data/minecraft/tags/entity_type/`. Current 
 
 ### TIER 2 — still open
 
-#### #13 — atomic / legendary gas is an undodgeable guaranteed kill  · **OPEN-C (tuning)**
-`clouds/atomic` summons `Duration:200`, `clouds/gas_apply` deals 8 damage every 20 ticks to
-everything within 4.5 → **~80 damage, armour ignored**. `clouds/legendary` is `Duration:300`,
-8 damage every 15 ticks within 8.5 → **~160 damage**. `world/cloud_random` can pick atomic
-1-in-6 from *every* mob and dropped item in a 16-block radius, so ordinary mob activity is
-frequently an instant kill. No opt-out, no difficulty scaling, no escape window.
-**Plan:** retune to "dangerous but survivable if you leave the radius" (~25–30 total), add a
-per-cloud damage budget, and give a short grace period on spawn.
+#### #13 — atomic / legendary gas is an undodgeable guaranteed kill  · **FIXED in v19**
+Was: `clouds/atomic` `Duration:200` with 8 damage every 20 ticks inside 4.5 → **~80 damage,
+armour ignored**; `clouds/legendary` `Duration:300` with 8 damage every 15 ticks inside 8.5 →
+**~160 damage**. `world/cloud_random` picks atomic 1-in-6 from *every* mob and dropped item in a
+16-block radius, so ordinary mob activity was frequently an instant kill.
 
-#### #14 — unbounded per-entity scoreboard leak  · **OPEN-C**
-Every entity that farts gets permanent rows in `fart.cooldown` + `fart.target`; every gas AEC gets
-`fart.gtick`. `scoreboard players reset` is never called, so a busy world accumulates thousands of
-fake-player rows. Same class as #3. A busy world also means `scoreboard players list` becomes
-unreadable for diagnostics (it was already 141 entries at audit time).
+Now every damaging cloud has **exactly one damage number and one cadence**, so the total is
+`damage × (Duration / cadence)` and that arithmetic is written in the file:
 
-#### #15 — the crouch detector is a fragile trick (it does work)  · **OPEN-C (rewrite)**
-`player/press.mcfunction:1-2`
-```
-execute at @s anchored eyes positioned ^ ^ ^ positioned ~ ~-1.27 ~ if entity @s[distance=..0.1] run tag @s add fart.sneak
-```
-Sneak eye height is exactly 1.27, so the probe lands on your feet when crouched (distance 0) and
-0.35 above them when standing. It works — but it also fires if any entity is within 0.1 of your
-ankles, and it dies the moment Mojang changes sneak eye height.
-`unless block ~ ~ ~ minecraft:air` is the maintainable equivalent.
+| cloud | damage | cadence | duration | max total |
+|---|---|---|---|---|
+| atomic | 3 | 20t | 200t | **30** (+ poison I ×100t ≈ 5–10) |
+| legendary | 4 | 30t | 300t | **40** |
+| legendary (player mega-fart) | 4 | 30t | 100t | **~16** |
 
-#### #16 — `#fartpack:utility` is missing ~19 modern blocks  · **OPEN-C**
-No `crafter, jukebox, enchanting_table, beacon, bell, conduit, decorated_pot, trial_spawner,
-copper_*`, etc. Those blocks never fart.
+Also: atomic's poison dropped from poison **IV**×140t to poison **I**×100t (that alone was ~28
+extra damage), the damage selector is now `type=!#fartpack:no_push` (was a 5-type list that
+happened to be lit up with item drops), and the player mega-fart's levitation was raised to
+amplifier 2 for the full 100t so it is genuinely an escape hatch rather than a death sentence.
 
-#### #17 — per-tick cost is the real TPS ceiling  · **OPEN-C**
-- `world/tick`: `tag @e remove fart.etick` + re-tag = 2 tag writes per entity **per player** per tick.
-- `blocks/scan`: **147 `execute positioned` per player every 10 ticks** (≈1 470 commands/tick for one player, ×N).
-- `push/core`: up to 4 near-identical `@e[…distance=..N]` passes where one pass plus a radius test would do.
-- `world/tick`: separate passes for `fart.gas_atomic` and `fart.gas_legendary` where one `tag=fart.gas` pass covers both.
-- gas clouds are applied in two passes (AEC tag + `fart.gtick`) where one would do.
+#### #14 — unbounded per-entity scoreboard leak  · **PARTIALLY FIXED in v19 (unfixable in part)**
+`core/reap` now wipes `fart.gtick` every 200 ticks, which is the dominant term: one row leaked
+per gas AEC and AECs are the most-spawned thing in the pack. 200t is far longer than the 20/30-tick
+gas cadences, so a reap can never permanently swallow a damage tick.
 
-#### #18 — `fart_forced` applies slowness but not the documented hunger penalty  · **OPEN-C (cosmetic)**
-The v13 journal claims "slowness + hunger 100t". Only slowness is there.
+`fart.cooldown` / `fart.target` are **deliberately left alone** and cannot be fixed in pure
+datapack commands — wiping them would make every mob fart simultaneously. Two things established
+empirically:
+- `scoreboard players list *` is **not** valid (`No relevant score holders could be found`).
+- `scoreboard players list` (no args) *does* dump every holder — but it is a human-readable
+  output command, so a datapack still cannot loop over the names.
 
-#### #19 — RP drift: the local resource pack is not what the server serves  · **OPEN-D**
-Server advertises `resource-pack-sha1=834edd3c…` (uploaded 2026-09-25 22:30). Local
-`fartpack_sounds.zip` is `6e6c1c2a…` (rebuilt 2026-09-26 10:31, **never uploaded**). So **any RP
-edit made locally is a no-op** until it is re-uploaded to Discord *and* `server.properties` sha1 is
-patched *and* the server restarts. The local RP `pack.mcmeta` also has **no `pack_format`** at all
-(only `min_format`/`max_format`), unlike the datapack's.
+Severity was **overstated** in the original audit: the whole server tracks ~110 holders across
+all packs, not "thousands". Re-evaluate before spending more effort here.
 
-#### #20 — three divergent pack copies, no build script, no git  · **OPEN-D**
-See "Source-of-truth" above; formalise the build + git in Pass D.
+#### #15 — the crouch detector is a fragile trick (it does work)  · **DOCUMENTED in v19**
+Vanilla has no "is this entity crouching" selector, so the eye-height probe is the *only* signal
+available — there is no `unless block ~ ~ ~ minecraft:air` equivalent that is equivalent. Extracted
+into `player/sneak.mcfunction` with the derivation written down: sneaking puts the eye anchor at
+exactly 1.27 above the feet, so `positioned ~ ~-1.27 ~` lands on your own feet only while crouched
+(distance 0) and 0.35 above them when standing. Radius widened 0.1 → 0.2 for float tolerance,
+still safely under the 0.35 standing offset.
+
+Real fragility, now documented in-file: it breaks if anything changes eye height — notably the
+`minecraft:player_scale` attribute (1.21.4+) or a mod altering sneaking.
+
+#### #16 — `#fartpack:utility` is missing ~19 modern blocks  · **FIXED in v19**
+21 → **64** blocks, every one verified against the live server's own registry with
+`build/checkblocks.py` (`execute if block` + error sniffing). That check earned its keep:
+**`minecraft:chain` does not exist in this server's registry** and would have failed the whole
+tag file, silently killing `#fartpack:utility` and every block fart in the game with nothing in
+the log. See the gotchas list — *a single unknown value in a `tags/block/*.json` kills the entire
+tag.* Do not hand-add block IDs without re-running the checker.
+
+`world/fart_block` was also collapsed: it had 18 hard-coded `if block <id>` + `tellraw` pairs, one
+per tagged block, so the tag drove the timer while the copy drove the chat and the two could drift
+silently. It is now one generic line that cannot drift.
+
+#### #17 — per-tick cost is the real TPS ceiling  · **FIXED in v19 (measured, see caveat)**
+- `world/etick` (new): the `tag @e remove` + per-player `tag @e add` rebuild moved out of
+  `world/tick` and onto a 10-tick cadence — **10× fewer** tag sweeps. This was the real hot spot
+  (2 writes per entity *per player* *per tick*).
+  ⚠ The exclusion list is deliberately unchanged. Do **not** "simplify" it to `type=!#fartpack:no_push`:
+  that tag contains `minecraft:item`, and dropped items farting is a core feature.
+- `blocks/scan` (147 lines, all three y-levels on one tick) split into `scan_low` / `scan_mid` /
+  `scan_high`, one per 10-tick phase → **3× fewer** block checks (147 per 30 ticks, not per 10).
+  ⚠ Each gate must be an **exact** tick (`matches 1`), not a range (`matches 1..9`) — a range runs
+  the branch on all nine ticks and the total is then unchanged, only the spike moves. I got this
+  wrong on the first attempt; the cycle sim caught it.
+- `push/core`: investigated and **deliberately left alone** — its four radius branches are not four
+  `@e` scans. `execute if score … run <selector>` only evaluates the selector when the score
+  matches, and callers set `#radius` to exactly one of 3/4/5/12, so exactly one scan happens.
+  Now documented in-file so nobody "optimises" it into a worse version.
+- The two gas passes in `world/tick` were left as-is: merging them would need a tag on every AEC
+  and the two selectors are already cheap and mutually exclusive.
+
+**Caveat on the win:** `tick query` reports 0.5 ms/tick, P99 0.7 ms, 20 TPS, 6.7% CPU. The pack
+was never the bottleneck on this hardware, so this work is headroom, not a rescue.
+
+#### #18 — `fart_forced` applies slowness but not the documented hunger penalty  · **FIXED in v19**
+`fart_forced` now gives `hunger 60 1` alongside the slowness, and `player/press` gives
+`hunger 5 0` while `fart.pressure ≥ 25` and you are not already releasing, so the
+"you'll get hungry from holding that in" warning on the release prompt is now literally true.
+Hunger only drains once saturation is gone, so it is a nudge, not a death sentence.
+
+#### #19 — RP drift: the local resource pack is not what the server serves  · **PARTLY FIXED, restart pending**
+Server advertises `resource-pack-sha1=834edd3c…`. Downloading that exact URL and diffing against
+local proved the drift is real and **is an audio change, not just a rebuild**:
+- served: 6 `.ogg` (12 076 / 12 076 / 14 626 / 10 043 / 7 253 / 14 664 bytes), description
+  "real synthesized fart audio"
+- local: 7 `.ogg` (8 902 / 17 804 / 6 568 / 28 169 / 8 857 / 12 754 / 48 081 bytes), description
+  "real CC0 flatulence audio (BigSoundBank)", and `sounds.json` lists **six** `fart.*` entries
+
+So the local CC0 audio was built and **never uploaded**. Any local RP edit is a no-op until it is
+re-uploaded to Discord **and** `server.properties` sha1 is patched **and** the server restarts.
+
+**CORRECTION to the original audit of this bug:** the claim that the RP `pack.mcmeta` "has no
+`pack_format` at all" was **wrong**, and the RP file must not be changed. minecraft.wiki confirms
+**resource pack format 75 = 1.21.11**, and resource-pack and data-pack formats are *separate*
+numberings (RP 75 vs data pack 94 for the same version). `min_format: [75,0] / max_format: [75,0]`
+is the idiomatic 1.21.9+ form and is correct as written. The datapack's `pack_format: 94` is
+likewise correct — vanilla's own built-in pack in the jar uses `min_format: [94,1], max_format: 94`.
+
+#### #20 — three divergent pack copies, no build script, no git  · **RESOLVED**
+`fartpack-latest/` and `fartpack_sounds/` are the only editable sources; `src/` is a generated
+mirror that `build.sh` syncs and git ignores. `build.sh` is verified deterministic — it
+reproduces a known deployed sha1 byte-for-byte. Everything is in git on `main`.
 
 #### #21 — 6 legitimate zero-reference functions  · **NOTE, not a bug**
 `fartpack:items` and `fartpack:player/fart` are manual admin commands; `fartpack:load` and
@@ -314,18 +401,26 @@ See "Source-of-truth" above; formalise the build + git in Pass D.
 |---|---|---|
 | **A** | Safety. Complete `core/bootstrap` + unify `load`; version-gate `#loaded`; init `#noplayer`/`#scan_c`/`#stats`; fix `actionbar`; probe-based `ensure_bar` + `#eb_tmp`; drop `fart.lasty`, `#ppy`, `bar/hide*`, `bar/show*`, `push/gentle`; clean live bossbar/scoreboard junk. | **shipped in v18** |
 | **B** | Felt bugs. `no_push` tag (#6); explicit `#power` (#11); `unless 1..` in stress (#8); stress cadence + de-spaghetti (#9); `fart.pressure` clamp (#10); real sound throttle (#7). | **shipped in v18** |
-| **C** | Tuning + perf. Gas rebalance (#13, #18); entity/gas scoreboard reaper (#14); crouch-detector rewrite (#15); `utility` block tag (#16); `blocks/scan` + `push/core` + gas-pass rewrite (#17). | pending |
-| **D** | Packaging. Build script + git + one source of truth (#20); RP `pack_format`; RP re-upload and `server.properties` sha1 bump (#19). | pending |
+| **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
+| **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **pending**. | partly done |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
 1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the
    live server parser. Must report `PARSE FAILURES: 0`.
-2. Check every macro file: each command line must contain `$(`.
-3. Deploy → `datapack enable "file/fartpack.zip"` → `reload`.
-4. `grep 'Failed to load' logs/latest.log` for the new line range — must show only the
+2. Check every macro file: each command line must contain `$(`. Check only the files that are
+   *invoked* `with storage` — not the callers that invoke them.
+3. If you touched a `tags/block/*.json`, re-verify every value with `build/checkblocks.py`.
+4. Deploy → `datapack enable "file/fartpack.zip"` → `reload`.
+5. `grep 'Failed to load' logs/latest.log` **for the new line range only** — old errors stay in the
+   file forever and a bare `grep -c` will make you think you broke something. Must show only the
    pre-existing lifesteal `quickdeath` error.
-5. `scoreboard objectives list` and `scoreboard players get #loaded fart.var` to confirm the
-   version gate fired.
+6. `scoreboard players get #loaded fart.var` to confirm the version gate fired.
+7. **Confirm 0 players online *before* reloading, and actually enforce it.** During the v19 deploy
+   the check was printed but not asserted, and a player was online for the reload.
+8. Because of `pause-when-empty-seconds`, step 7's "0 players" also means the pack will not tick
+   afterwards. Runtime-verify with `build/smoke.sh`, which drives `fartpack:tick` by hand over
+   RCON and works while the server is paused.
+9. `tick query` for a real per-tick timing number.
 
 ## 4. Revert
 Every pass is a standalone zip in `backups/fartpack/vNN.zip`, and the pre-session v16 is also at

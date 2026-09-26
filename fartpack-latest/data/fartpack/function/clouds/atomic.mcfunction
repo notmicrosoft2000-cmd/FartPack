@@ -1,1 +1,5 @@
-summon minecraft:area_effect_cloud ~ ~0.7 ~ {custom_particle:{type:"minecraft:dragon_breath"},Radius:4.0f,RadiusOnUse:-0.05f,RadiusPerTick:0.0f,Duration:200,WaitTime:10,ReapplicationDelay:20,Tags:["fart.gas_atomic"],potion_contents:{custom_color:8519723,custom_effects:[{id:"minecraft:poison",amplifier:3,duration:140,show_particles:1b}]}}
+# clouds/atomic - the "radioactive" cloud. 1 in 6 of every random fart.
+# Radius 4, lives 200 ticks (10s), shrinks 0.05/tick. WaitTime 10 gives you a
+# 0.5s head start before it bites. Poison is deliberately poison I (not IV) for
+# 100 ticks so the cloud alone lands around 35 total damage, not 60+.
+summon minecraft:area_effect_cloud ~ ~0.7 ~ {custom_particle:{type:"minecraft:dragon_breath"},Radius:4.0f,RadiusOnUse:-0.05f,RadiusPerTick:0.0f,Duration:200,WaitTime:10,ReapplicationDelay:20,Tags:["fart.gas_atomic"],potion_contents:{custom_color:8519723,custom_effects:[{id:"minecraft:poison",amplifier:0,duration:100,show_particles:1b}]}}
