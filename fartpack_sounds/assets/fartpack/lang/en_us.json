@@ -1,0 +1,7 @@
+{
+  "subtitle.fartpack.fart": "Flatulence",
+  "subtitle.fartpack.legendary": "Thunderous Flatulence",
+  "death.attack.fartpack.atomic": "%1$s was atomically obliterated by a radioactive fart!",
+  "death.attack.fartpack.legendary": "%1$s got vaporized by a legendary mega-fart!",
+  "death.attack.fartpack.legendary.player": "%1$s got vaporized by %2$s's legendary mega-fart!"
+}

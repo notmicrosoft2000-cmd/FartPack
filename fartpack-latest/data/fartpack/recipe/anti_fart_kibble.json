@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "minecraft:cooked_beef",
+    "minecraft:dried_kelp",
+    "minecraft:sugar"
+  ],
+  "result": {
+    "components": {
+      "minecraft:custom_data": {
+        "fartpack": "kibble"
+      },
+      "minecraft:item_name": "Anti-Fart Kibble"
+    },
+    "count": 1,
+    "id": "minecraft:cooked_beef"
+  }
+}

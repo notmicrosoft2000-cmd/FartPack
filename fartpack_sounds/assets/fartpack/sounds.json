@@ -1,0 +1,19 @@
+{
+  "fart.burp": {
+    "subtitle": "subtitle.fartpack.fart",
+    "sounds": [
+      "fartpack:fart1",
+      "fartpack:fart2",
+      "fartpack:fart3",
+      "fartpack:fart4",
+      "fartpack:fart5",
+      "fartpack:fart6"
+    ]
+  },
+  "fart.legendary": {
+    "subtitle": "subtitle.fartpack.legendary",
+    "sounds": [
+      "fartpack:fart_legendary"
+    ]
+  }
+}

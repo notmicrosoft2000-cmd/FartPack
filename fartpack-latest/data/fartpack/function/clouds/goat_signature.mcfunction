@@ -1,0 +1,2 @@
+playsound minecraft:entity.goat.horn_break player @a ~ ~ ~ 2.0 1.0
+summon minecraft:area_effect_cloud ~ ~0.7 ~ {custom_particle:{type:"minecraft:cloud"},Radius:3.0f,RadiusOnUse:-0.05f,RadiusPerTick:0.0f,Duration:200,WaitTime:0,ReapplicationDelay:10,potion_contents:{custom_color:16777215,custom_effects:[{id:"minecraft:jump_boost",amplifier:4,duration:200,show_particles:1b},{id:"minecraft:speed",amplifier:1,duration:200,show_particles:1b}]}}

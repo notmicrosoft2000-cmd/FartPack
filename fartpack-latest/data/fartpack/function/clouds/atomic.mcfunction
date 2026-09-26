@@ -1,0 +1,1 @@
+summon minecraft:area_effect_cloud ~ ~0.7 ~ {custom_particle:{type:"minecraft:dragon_breath"},Radius:4.0f,RadiusOnUse:-0.05f,RadiusPerTick:0.0f,Duration:200,WaitTime:10,ReapplicationDelay:20,Tags:["fart.gas_atomic"],potion_contents:{custom_color:8519723,custom_effects:[{id:"minecraft:poison",amplifier:3,duration:140,show_particles:1b}]}}

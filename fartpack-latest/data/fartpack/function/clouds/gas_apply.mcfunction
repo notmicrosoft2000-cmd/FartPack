@@ -1,0 +1,5 @@
+scoreboard players add @s fart.gtick 1
+execute if entity @s[tag=fart.gas_atomic] if score @s fart.gtick matches 20.. as @e[type=!minecraft:area_effect_cloud,type=!minecraft:item,type=!minecraft:experience_orb,type=!minecraft:marker,type=!minecraft:firework_rocket,distance=..4.5] run damage @s 8 fartpack:atomic_gas
+execute if entity @s[tag=fart.gas_atomic] if score @s fart.gtick matches 20.. run scoreboard players set @s fart.gtick 0
+execute if entity @s[tag=fart.gas_legendary] if score @s fart.gtick matches 15.. as @e[type=!minecraft:area_effect_cloud,type=!minecraft:item,type=!minecraft:experience_orb,type=!minecraft:marker,type=!minecraft:firework_rocket,distance=..8.5] run damage @s 8 fartpack:legendary_gas
+execute if entity @s[tag=fart.gas_legendary] if score @s fart.gtick matches 15.. run scoreboard players set @s fart.gtick 0

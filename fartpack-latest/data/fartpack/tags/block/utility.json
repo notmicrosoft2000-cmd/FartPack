@@ -1,0 +1,25 @@
+{
+  "values": [
+    "minecraft:crafting_table",
+    "minecraft:furnace",
+    "minecraft:blast_furnace",
+    "minecraft:smoker",
+    "minecraft:chest",
+    "minecraft:trapped_chest",
+    "minecraft:barrel",
+    "minecraft:dispenser",
+    "minecraft:dropper",
+    "minecraft:hopper",
+    "minecraft:campfire",
+    "minecraft:beehive",
+    "minecraft:lectern",
+    "minecraft:stonecutter",
+    "minecraft:anvil",
+    "minecraft:brewing_stand",
+    "minecraft:composter",
+    "minecraft:cauldron",
+    "minecraft:water_cauldron",
+    "minecraft:lava_cauldron",
+    "minecraft:powder_snow_cauldron"
+  ]
+}

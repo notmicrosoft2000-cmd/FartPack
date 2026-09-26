@@ -1,0 +1,9 @@
+# Build artifacts - reproducible from source via ./build.sh
+*.zip
+
+# Generated mirror of fartpack-latest/data (see build.sh). Tracked nowhere on purpose:
+# keeping two live copies of the same functions is what caused the pre-v18 divergence.
+src/
+
+# OS cruft
+.DS_Store
