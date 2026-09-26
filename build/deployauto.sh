@@ -1,42 +1,44 @@
 #!/usr/bin/env bash
-# deployv25.sh - wait for an empty server, then lint and deploy v25.
+# deployauto.sh <version> - wait for an empty server, then lint, deploy, verify.
 #
-# Why this exists: the standing rule is that a datapack reload may only happen
-# with 0 players online. Two people were on the server when v25 was ready, and
-# the lint gate correctly refused to run, because lintpack.py is a real parse
-# test - it EXECUTES every line it checks, so the pack's own setblock / give /
-# kill / tag lines would have fired at two players.
+# Why the wait exists: the standing rule is that a datapack reload may only
+# happen with 0 players online. This waits for the server to empty and then does
+# the normal gated sequence. It never forces anything - the worst case is that
+# it times out having done nothing.
 #
-# So rather than either stalling or breaking the rule, this waits for the server
-# to empty and then does the normal gated sequence. It never forces anything:
-# the worst case is that it times out having done nothing.
+# Why the version is an ARGUMENT and not part of the filename: this used to be
+# deployv25.sh and had to be copied to deployv26.sh, deployv27.sh and so on,
+# which is how a stale script ends up deploying the wrong thing. Pass the number
+# and the same script keeps working.
 #
 # Runs on the server. Everything it needs is already in /tmp.
 set -uo pipefail
+VER="${1:?usage: deployauto.sh <version>}"
 SID=241920ac-55ce-46c6-aa2f-c42ebf290457
 SRV="$HOME/crafty/servers/$SID"
 MAXWAIT=5400        # 90 minutes; giving up is always a safe outcome
-t=0
+needzero=2
+zeros=0
 
 count_players() {
   python3 /tmp/rcon.py 'list' 2>/dev/null \
     | grep -oE 'There are [0-9]+ of' | grep -oE '[0-9]+' | head -1
 }
 
+echo "=== deployauto.sh: target version $VER ==="
 echo "=== waiting for an empty server (max ${MAXWAIT}s) ==="
 # Two consecutive empty polls, 30s apart, before we act.
 #
-# A single 0 is not enough. On the first attempt the wait loop saw 0, the
+# A single 0 is not enough. On an earlier attempt the wait loop saw 0, the
 # re-confirm 20 seconds later also saw 0, and then lint.sh's own guard - which
 # runs later still, and is the check that matters because lint EXECUTES commands -
 # saw 1 and refused. A player had walked in during the gap. Nothing was deployed
 # and nothing was executed at them, so that was a correct outcome, not a failure,
 # but it wasted the attempt. Requiring the server to be empty across a 30 second
 # window means we only act on a real gap rather than a momentary dip.
-needzero=2
-zeros=0
 while :; do
   n=$(count_players)
+  t=$(( ${t:-0} ))
   if [ -z "$n" ]; then
     echo "  $t: player count UNREADABLE - not assuming empty, still waiting"
     zeros=0
@@ -81,8 +83,8 @@ if [ $rc -ne 0 ]; then
 fi
 
 echo
-echo "############ DEPLOY v25 ############"
-bash /tmp/deploy.sh 25
+echo "############ DEPLOY v$VER ############"
+bash /tmp/deploy.sh "$VER"
 rc=$?
 if [ $rc -ne 0 ]; then
   echo "ABORT: deploy.sh exited $rc. Not claiming success."
@@ -91,7 +93,7 @@ fi
 
 echo
 echo "############ POST-DEPLOY VERIFY ############"
-echo "--- #loaded version gate (must be 25) ---"
+echo "--- #loaded version gate (must be $VER) ---"
 python3 /tmp/rcon.py 'scoreboard players get #loaded fart.var' 2>/dev/null | tail -2
 
 echo "--- datapack list ---"
@@ -138,12 +140,21 @@ ls -1 "$HOME/crafty/removed-datapacks/removed-from-datapacks/" 2>/dev/null \
   | sed 's/^/  /' || echo "  MISSING: no backup dir - lifesteal is gone with no way back."
 
 echo
-echo "############ NOT VERIFIABLE HERE ############"
-echo "Player-vs-player knockback itself. Proving it needs a second player to be"
-echo "the push target, and this gate only ever runs with 0 players online. What IS"
-echo "checked is that nothing sets #noplayer to 1 any more, so the strip in"
-echo "push/core cannot fire during a crouch release. Ask a player to crouch-fart"
-echo "next to another player and confirm the other one is shoved."
+echo "############ CONFIG LAYER (v26) ############"
+bash /tmp/verifycfg.sh
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "WARNING: verifycfg.sh reported failures. The pack is deployed but the"
+  echo "admin config layer is NOT verified - treat the /function commands as suspect."
+fi
 
 echo
-echo "=== DONE. v25 deployed. ==="
+echo "############ NOT VERIFIABLE AT 0 PLAYERS ############"
+echo "  * player-vs-player knockback (#28) - needs a second player as the target"
+echo "  * admin/reset, admin/show, admin/resync_bar - they start with 'execute as'"
+echo "  * the bar filling at the new rate, and the bossbar resizing"
+echo "  * the knockback distance changing with admin/pow"
+echo "  Ask a player to crouch-fart next to another player to confirm #28."
+
+echo
+echo "=== DONE. v$VER deployed. ==="

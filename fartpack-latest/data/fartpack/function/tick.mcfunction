@@ -28,7 +28,13 @@
 # v25: adds the weather and random-event systems (fart rain, gas surge, cyclone,
 # blessing, swarm) ported in from an independent fork. Version numbers 21-24 were
 # never used; see BUGS-AND-FIXES.md.
-execute unless score #loaded fart.var matches 25 run function fartpack:core/bootstrap
+#
+# v26: adds the per-player config layer - admin/rate, admin/every, admin/cap,
+# admin/rel, admin/pow, admin/reset, admin/show - so gas speed, bar size, drain
+# rate and knockback can be set per player with /function. This costs one extra
+# command per player per tick (bar/tick_gas_bar has to hand the cap to the
+# bossbar macro) and two comparisons per gas pass; it adds no entity selectors.
+execute unless score #loaded fart.var matches 26 run function fartpack:core/bootstrap
 scoreboard players enable @a fart.toggle
 execute as @a[scores={fart.toggle=1..}] run function fartpack:core/do_toggle
 execute as @a[scores={fart.toggle=1..}] run scoreboard players set @s fart.toggle 0

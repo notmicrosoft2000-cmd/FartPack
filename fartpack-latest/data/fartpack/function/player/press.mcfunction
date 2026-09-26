@@ -18,5 +18,14 @@ execute if entity @s[tag=fart.healing] unless entity @s[tag=fart.sneak] run effe
 execute if entity @s[tag=fart.sneak,tag=fart.releasing] at @s run function fartpack:player/release_gas
 # Holding a lot of gas in costs you, as the release prompt promises. Refreshed
 # every tick so it only bites while you are genuinely sitting on a full bar.
-execute if score @s fart.pressure matches 25.. unless entity @s[tag=fart.releasing] run effect give @s minecraft:hunger 5 0 true
-execute if score @s fart.pressure matches 100.. at @s run function fartpack:world/fart_forced
+# The threshold is a quarter of this player's own cap (fart.warn, derived by
+# admin/recalc) rather than the old constant 25, so it still bites at the same
+# fraction of the bar for somebody whose cap was raised. Guarded on `matches
+# 1..` for the same reason as everywhere else: an unset score fails the
+# comparison, and this runs on the per-tick path for every player.
+execute unless score @s fart.warn matches 1.. run scoreboard players set @s fart.warn 25
+execute if score @s fart.pressure >= @s fart.warn unless entity @s[tag=fart.releasing] run effect give @s minecraft:hunger 5 0 true
+# Ditto the forced legendary mega-fart, which is "bar is full" - so it is
+# exactly the cap, not a constant.
+execute unless score @s fart.leg matches 1.. run scoreboard players set @s fart.leg 100
+execute if score @s fart.pressure >= @s fart.leg at @s run function fartpack:world/fart_forced

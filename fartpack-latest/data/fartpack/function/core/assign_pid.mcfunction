@@ -1,6 +1,12 @@
+# admin/defaults runs FIRST, before the bossbar is created, because make_gas_bar
+# sizes the bar from the cap and the cap does not exist until defaults has set
+# it. Getting this order wrong would create every new player's bar at the
+# fallback 100 regardless of any config set for them later in the same tick.
 scoreboard players add #pid_counter fart.pid 1
 scoreboard players operation @s fart.pid = #pid_counter fart.pid
+function fartpack:admin/defaults
 execute store result storage fartpack:data macro.pid int 1 run scoreboard players get @s fart.pid
+execute store result storage fartpack:data macro.cap int 1 run scoreboard players get @s fart.cap
 function fartpack:bar/make_gas_bar with storage fartpack:data macro
 execute store result score @s fart.lastx run data get entity @s Pos[0] 100
 execute store result score @s fart.lastz run data get entity @s Pos[2] 100

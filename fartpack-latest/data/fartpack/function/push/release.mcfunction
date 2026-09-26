@@ -26,7 +26,17 @@
 #
 # You are never pushed by your own fart: push/core tags the source as
 # `fart.pushersrc` and every target selector requires `tag=!fart.pushersrc`.
+#
+# v26: #power comes from the releasing player's own fart.pow (admin/pow, stock
+# 30) instead of being hardcoded. Read with a guarded `operation =` rather than
+# `store result ... scoreboard players get`, because a failed get does not write
+# its target and would leave #power holding whatever the last caller put there -
+# and because 0 is a legal setting meaning "no shove at all", which a
+# `matches 1..` guard would have silently rewritten back to 30. `matches ..-1`
+# is true only for 0 and negatives, so unset keeps the stock 30 and an explicit
+# 0 is honoured.
 scoreboard players set #power fart.var 30
+execute if score @s fart.pow matches ..-1 run scoreboard players operation #power fart.var = @s fart.pow
 scoreboard players set #vy fart.var 20
 scoreboard players set #radius fart.var 5
 function fartpack:push/core

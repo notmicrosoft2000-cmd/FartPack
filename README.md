@@ -166,15 +166,66 @@ ssh nept@192.168.99.56 "grep -A2 'Failed to load' \
 
 Adding a new `damage_type` needs a **full server restart** — it is a non-reloadable registry.
 
+## Per-player config (v26)
+
+Every number below is a plain `/function` call with a player name and a value. No menus, no
+scoreboard GUI, nothing to hold items.
+
+```sh
+/function fartpack:admin/rate  Steve 2      # gas bar fills 2x faster      (0-5, 0 = frozen)
+/function fartpack:admin/every Steve 2      # fills only every 2nd pass    (1-4)
+/function fartpack:admin/cap   Steve 200    # bar fills to 200             (20-500)
+/function fartpack:admin/rel   Steve 3      # drains 3/tick while crouching (1-10)
+/function fartpack:admin/pow   Steve 80     # knockback on release         (0-200, 0 = no shove)
+/function fartpack:admin/show  Steve        # prints their config to chat
+/function fartpack:admin/reset Steve        # back to stock
+```
+
+| knob | default | what it does |
+|---|---|---|
+| `rate` | 1 | How many times the movement-derived base increment is added per fill pass. `2` is twice as fast, `0` never fills on its own. |
+| `every` | 1 | Throttle: fill on only 1 pass in N. `2` takes twice as long. Composes with `rate` — `rate 3` + `every 2` is 1.5x. |
+| `cap` | 100 | What the bar fills to. Also resizes the bossbar **and** moves the two thresholds that used to be hardcoded — the hunger warning (a quarter full) and the forced legendary mega-fart (full). |
+| `rel` | 1 | How much pressure a crouching release drains per tick. |
+| `pow` | 30 | Horizontal impulse applied to other entities on release, in 1/100 blocks per tick. This is the number that decides how far a player knocks *other players* back, now that #28 lets them do it at all. |
+
+Out-of-range values are **clamped, not rejected** — a macro can't branch on the literal text of an
+argument, and an admin who types `99` wants a big number, not an error. The read-back in chat tells
+you what actually landed.
+
+Values are stored per player and persist across restarts. Resetting is explicit (`admin/reset`);
+there is no per-reload reset, so a config cannot be lost by a crash.
+
+**Example — the "King of the Farts" crown.** Three calls and a message:
+
+```mcfunction
+/function fartpack:admin/rate YOSHIKURO1 2
+/function fartpack:admin/pow  YOSHIKURO1 60
+/tellraw @a [{"text":"[Fartpack] Player YOSHIKURO1 is now declared the first King of the farts! You will now fart 2x faster!","color":"gold"}]
+```
+
+**Not scaled by `cap`, deliberately:** the Anti-Fart Kibble still removes a flat 15. Scaling it
+would have changed how strong it feels for everybody the moment this system existed.
+
 ## Rules for editing datapack functions
 
 1. **Never** write a bare `actionbar` — Java has no such command. Use `title <targets> actionbar <json>`.
-2. A macro function (`function … with storage`) rejects any command line with no `$(var)`.
+2. A macro function (`function … with storage`) rejects any command line with no `$(var)` — the
+   **whole file** silently stops existing, and `checkrefs.py` reports it as *uncallable* rather
+   than as a parse error. Run `python3 build/checkmacro.py <pack>` before deploying; it exists
+   only because of this rule.
 3. An unset score does **not** match `matches 0`. Use `unless score X matches 1..`.
 4. When adding/removing a scoreboard objective, bump the version constant in
    `core/bootstrap.mcfunction` **and** `tick.mcfunction:1`, or it will not reach an existing world.
 5. Bossbars are runtime-only (wiped on restart); player tags and scores persist. Never track
    bossbar existence in a tag or score — probe with `bossbar get <bar> max`.
 6. Function execution is synchronous, so a single shared `#fake` scratch scoreholder is safe.
+7. **A macro is expanded in full before any of its lines run.** A macro cannot write the storage
+   key it reads — `bar/tick_gas_bar` has to hand `$(cap)` to `bar/ensure_bar` because a
+   `store result storage` inside `ensure_bar` would land long after `$(cap)` was substituted, and
+   every bar would be sized from the previously-processed player.
+8. `fart.rate 0` (frozen) and "never set" are indistinguishable to a scoreboard — both fail
+   `matches 1..`. Never initialise per-player config by testing values; use the `fart.has_cfg` tag.
+   `build/simfill.py` models the fill arithmetic and asserts unset means stock, not frozen.
 
 See `BUGS-AND-FIXES.md` for the full bug catalogue and what's still open.

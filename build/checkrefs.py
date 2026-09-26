@@ -89,10 +89,28 @@ for tagname in ("load", "tick"):
 #   /function fartpack:items         -> a sample of both consumables
 #   /function fartpack:items/give    -> the same, inner function
 #   /function fartpack:player/fart   -> "I need to go right now", skips the timer
+#   /function fartpack:admin/*       -> the per-player config commands (v26)
+# The admin/* set is typed by an operator with arguments, e.g.
+#   /function fartpack:admin/rate Steve 2
+# so nothing in the pack can ever call it. show_one, resync_bar, recalc and
+# defaults are reached from those macros and are listed because checkrefs walks
+# function calls, not the fact that a macro's caller supplies the arguments.
 MANUAL = {
     "fartpack:items",
     "fartpack:items/give",
     "fartpack:player/fart",
+    "fartpack:admin/cap",
+    "fartpack:admin/defaults",
+    "fartpack:admin/every",
+    "fartpack:admin/pow",
+    "fartpack:admin/rate",
+    "fartpack:admin/recalc",
+    "fartpack:admin/rel",
+    "fartpack:admin/reset",
+    "fartpack:admin/resync_bar",
+    "fartpack:admin/set_max",
+    "fartpack:admin/show",
+    "fartpack:admin/show_one",
 }
 entrypoints |= MANUAL
 import glob

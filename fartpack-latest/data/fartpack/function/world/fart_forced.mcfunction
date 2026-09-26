@@ -1,4 +1,6 @@
-# world/fart_forced - the bar hit 100 and the player could not hold it.
+# world/fart_forced - the bar filled up and the player could not hold it.
+# "Full" is the player's own cap (fart.leg), not a constant - player/press
+# compares against it, so a 200-cap player fills the bar before this fires.
 tellraw @a [{"text":"BRAAAAP! ","color":"red"},{"selector":"@s"},{"text":" couldn't hold it any longer - LEGENDARY MEGA-FART! Everyone FLIES!!","color":"gold"}]
 playsound minecraft:entity.wither.spawn player @a ~ ~ ~ 4.0 0.5
 playsound minecraft:entity.generic.explode player @a ~ ~ ~ 4.0 0.9

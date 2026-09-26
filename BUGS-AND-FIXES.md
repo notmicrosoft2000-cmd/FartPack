@@ -75,6 +75,7 @@ because keeping two live copies is what caused the pre-v18 divergence. Everythin
 | Is `minecraft:display` a valid selector type? | **No** — "Invalid or unknown entity type". Must list `text_display`, `block_display`, `item_display` separately. | RCON parse test |
 | Tag directory in 1.21.11 | `tags/entity_type/` is still correct (vanilla jar has it). Not renamed to `tags/entity/`. | vanilla jar listing |
 | Does a macro function accept a line with no `$(var)`? | **No** — `No variables in macro`, the whole function is dropped. | datapack load error |
+| Is a macro expanded line-by-line as it runs, or all at once first? | **All at once, first.** A macro cannot write the storage key it reads — the write lands long after `$(…)` was substituted. This is why `bar/tick_gas_bar` has to hand `$(cap)` to `bar/ensure_bar` from the caller. Found by writing the sensible version and noticing it sized every bar from the previous player; see #29. | design reasoning, then confirmed by `PARSE FAILURES` staying 0 with the caller-side write |
 | Is function execution concurrent? | **No** — synchronous, `execute as` is sequential. Global scratch `#fake` players are therefore safe. | Mojang behaviour |
 | Is `scoreboard players list *` a way to enumerate rows? | **No** — `No relevant score holders could be found`. The bare `scoreboard players list` does list all ~110 holders, but it is a human-readable output command, so a datapack still cannot loop over them. Decides #14. | RCON parse test |
 | Does an unset score match `matches 0`? | **No.** Use `unless score X matches 1..`. | live probe |
@@ -693,6 +694,87 @@ It was **backed up before removal** and the copy verified byte-identical by sha2
 That directory is outside `world/datapacks`, so the backup cannot be loaded by accident. `pwr` and
 `Graves` were not touched. Script: `build/remove-lifesteal.sh`.
 
+### #29 — nothing in the pack was configurable · **FEATURE in v26**
+Not a defect so much as a gap, and the only entry in this file that is a request rather than a
+failure. There were exactly two ways to change how FartPack behaves: edit the functions and
+redeploy, or hand a player a consumable. Every number that decides how the gas bar feels was a
+constant in a file.
+
+Five are now per-player and settable with `/function` — see the table in `README.md` for the exact
+commands, ranges and defaults. `rate`, `every`, `cap`, `rel`, `pow`, plus `show` and `reset`.
+
+**The obstacle is that a scoreboard cannot multiply.** `player/fill_gas` added a hardcoded `+1` or
+`+2` per pass depending on whether the player had moved, and there is no command meaning "add
+pressure times this player's rate". The fix is to compute the base once into a scratch score and
+then repeat the *same* addition once per rate step:
+
+```mcfunction
+execute unless score @s fart.rate matches ..0 run scoreboard players operation @s fart.pressure += #famt
+execute if score @s fart.rate matches 2.. run scoreboard players operation @s fart.pressure += #famt
+…
+```
+
+A stock player runs exactly one add and pays four failed comparisons. Critically it adds **no**
+entity selector and no `data get`, because the two `data get entity` calls that decide whether the
+player moved stay in `fill_gas` where they already were. This pack cares a great deal about
+per-tick cost (#17) and the naive version of this feature — running `fill_gas` N times — would
+have cost N times the most expensive part of the fill.
+
+The whole feature costs **one** extra command per player per tick (see the macro rule below) and
+two comparisons per gas pass.
+
+**Three traps, all of which produced working-looking code:**
+
+1. **`fart.rate 0` and "unset" are the same to a scoreboard.** Both fail `matches 1..`, so the
+   obvious guard — `if score @s fart.rate matches 1.. run <add>` — silently stops a player's bar
+   filling entirely if they were never initialised, and that failure is indistinguishable from an
+   admin having deliberately frozen them. The first add is therefore
+   `unless score @s fart.rate matches ..0`, which treats unset as stock and only an explicit 0 as
+   frozen. This is also why config is initialised by the `fart.has_cfg` **tag** rather than by
+   testing values.
+
+2. **A macro is expanded in full before any of its lines run**, so a macro cannot write the storage
+   key it reads. `bar/ensure_bar` wants `$(cap)`, and a `store result storage … macro.cap` inside
+   `ensure_bar` would execute long after `$(cap)` had been substituted — sizing every bossbar from
+   the previously-processed player. The write had to move to the caller,
+   `bar/tick_gas_bar`. This cost one extra command per player per tick, which is the entire
+   per-tick price of the feature.
+
+3. **A macro line with no `$(var)` drops the entire file**, and `checkrefs.py` reports the result
+   as *uncallable*, not as a parse error — so the failure surfaces as "this function doesn't
+   exist" with nothing in the log explaining why. Three of the new files hit this: the bossbar
+   resize, the `/4` division, and `admin/show`'s body all wanted lines that had no argument to put
+   a variable in. All three moved to plain functions (`admin/resync_bar`, and the arithmetic
+   written directly against `$(arg0)`). `build/checkmacro.py` now checks the rule statically,
+   because the only other way to find out is a live reload.
+
+**`cap` had to move two thresholds that were hardcoded against the constant 100.** `player/press`
+tested `matches 25..` for the hunger warning and `matches 100..` for the forced legendary fart. Left
+alone, a 200 cap would have fired the legendary fart at half a bar, and a 40 cap would have made it
+unreachable. Both are now derived — `fart.warn` is a quarter of the cap, `fart.leg` is the cap — so
+at the stock cap of 100 nothing changes for anybody.
+
+**Verified:** `build/simfill.py` models the fill arithmetic against transcribed command semantics
+and asserts 24 properties, including the regression that matters most — *stock behaviour is
+byte-identical* — plus that the throttle fires on every Nth pass rather than every Nth+1, that the
+two knobs compose exactly (`rate 2` + `every 2` is stock), and that the throttle counter cannot
+grow without bound. `build/verifycfg.sh` then exercises the real macros on the live server after
+each deploy, against a **fake scoreboard holder** (`#cfgtest`) — scoreboard operations work on fake
+players, so the whole clamp-and-derive path is testable at 0 players, which is the only time we are
+allowed to run anything. It covers argument substitution, both clamps on every knob, the `/4`
+derivation including a non-multiple-of-4 cap, and that `pow 0` is honoured rather than rewritten to
+stock.
+
+**Not verified, and not verifiable at 0 players:** that the bar actually fills at the new rate, that
+the bossbar resizes, and that the knockback distance changes. `admin/reset`, `admin/show` and
+`admin/resync_bar` also begin with `execute as <name>`, which resolves only against real entities,
+so those three are untested by construction. The test script says all of this in its own output
+rather than reporting a green tick that means less than it appears to.
+
+**Deliberately not scaled by `cap`:** the Anti-Fart Kibble still removes a flat 15. Scaling it would
+be more internally consistent and would also have changed how strong it feels for every existing
+player the moment this system shipped.
+
 ---
 
 ## 2b. v25 — the weather and event port
@@ -756,6 +838,12 @@ Everything else weather-related is initialised so the state is readable on a fre
 just `execute unless score #loaded fart.var matches 25`, so the number itself carries no meaning
 beyond "different from 20 so bootstrap re-runs".
 
+**v25 was never deployed.** The auto-deploy sat behind the 0-player gate for the whole session while
+players were on, and by the time the per-player config layer (#29) was written it was more honest to
+skip straight to 26 than to reload twice. The server went from `#loaded 20` to `#loaded 26` in one
+operation, so **there is no v25 rollback point** — v25 exists only as this section of the changelog.
+The weather and event work is in v26 unchanged.
+
 ---
 
 ## 3. Fix order (passes)
@@ -767,7 +855,7 @@ beyond "different from 20 so bootstrap re-runs".
 | **C** | Tuning + perf. Gas rebalance (#13, #18); gas-scoreboard reaper (#14); crouch detector documented (#15); `utility` block tag 21→64 (#16); `blocks/scan` 3-way split + `world/etick` cadence (#17). | **shipped in v19** |
 | **D** | Packaging. Build script + git + one source of truth (#20) **done**; RP re-upload + `server.properties` sha1 bump + restart (#19) **done**. | **done in v19/v20** |
 | **E** | Player-reported fixes. Crouch strain unreachable (#22); block-name announcements restored from a generated lookup (#23); player knockback via `Motion` instead of `tp` (#24). | **shipped in v20, all three machine-verified** |
-| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27); player-vs-player knockback restored (#28); lifesteal datapack removed. | **v25, lint-clean, pending deploy** |
+| **F** | Weather + events ported from an independent fork; consumable once-ever fix (#26); toggle-off stops the weather (#27); player-vs-player knockback restored (#28); lifesteal datapack removed; per-player config layer (#29). | **v26, lint-clean, pending deploy** |
 
 ### Verify-before-deploy (learned the hard way — use this every time)
 1. `python3 lintpack.py` against the built zip: parse-checks **every** command line against the
