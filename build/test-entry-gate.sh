@@ -8,6 +8,11 @@
 #   C  the ACTUAL sudo password           -> must FAIL
 # C is assembled on the server from SERVER-NOTES.txt so the value is never typed,
 # printed, or sent over the wire. It is deleted immediately after.
+# Do not leave a compiled copy of check-entry.py in wiki/bin/. This suite
+# imports it as a module, and CPython writes a __pycache__ beside anything it
+# imports. That directory is not swept on a schedule - the side effect is
+# what should stop, so the side effect is what is stopped here.
+export PYTHONDONTWRITEBYTECODE=1
 set -uo pipefail
 H="$HOME/homelab"
 W="$H/wiki"

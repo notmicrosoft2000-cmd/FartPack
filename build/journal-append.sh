@@ -33,14 +33,23 @@
 #   4. growth      - asserts the files actually GREW, not that a command exited 0.
 set -euo pipefail
 
-H="$HOME/homelab"
+# HOMELAB and AILOCK are overridable so the test suite can exercise this
+# script against a scratch tree. Without that, the suite that exists to prove
+# the duplicate sentinel works has to run against the real journal - and it
+# did, and it created the very duplicate it was looking for. The default is
+# unchanged, so every normal invocation behaves exactly as before.
+H="${HOMELAB:-$HOME/homelab}"
 W="$H/wiki"
 SHARED="wiki/journals/SHARED-STATE-LOG.md"
-AILOCK="$W/bin/ailock.sh"
+AILOCK="${AILOCK:-$W/bin/ailock.sh}"
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_ENTRY="$SELF_DIR/check-entry.py"
-SRC_AI="/tmp/append-ai.md"
-SRC_SV="/tmp/append-server.md"
+# Overridable so a caller states which files it means. The old hardcoded /tmp
+# paths meant `journal-append.sh` with no arguments meant "append whatever
+# happens to be in /tmp" - so the test suite was testing a stale leftover
+# from a previous run rather than a fixture anybody chose.
+SRC_AI="${SRC_AI:-/tmp/append-ai.md}"
+SRC_SV="${SRC_SV:-/tmp/append-server.md}"
 LOCKDIR="$W/journals"
 LOCK_HELD=0
 
