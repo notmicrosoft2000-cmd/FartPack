@@ -39,6 +39,58 @@ import sys
 
 H = pathlib.Path.home()
 
+# ------------------------------------------------------------------ import guard
+# Importing this file as a module makes CPython write check-entry.cpython-*.pyc
+# into wiki/bin/__pycache__/. A per-script `export PYTHONDONTWRITEBYTECODE=1`
+# prevents that, but only in the scripts somebody remembered to patch - and the
+# two suites I patched were not the only importers, so the directory came back
+# from a repair script an hour later.
+#
+# Setting sys.dont_write_bytecode HERE would be too late: the import machinery
+# compiles and writes the .pyc before this body runs. That fix looks right and
+# does nothing, which is why it is worth writing down rather than rediscovering.
+#
+# So the guard is a refusal instead. An importer that forgets gets a clear error
+# naming the variable, not a silent cache. Run as a script (python3
+# check-entry.py FILE) this never triggers - the cache is only ever written for
+# an IMPORTED module, never for __main__.
+if __name__ != "__main__" and not os.environ.get("PYTHONDONTWRITEBYTECODE"):
+    sys.stderr.write(
+        "check-entry.py: refusing to be imported without PYTHONDONTWRITEBYTECODE=1.\n"
+        "  Importing this module makes CPython write __pycache__/ into wiki/bin/,\n"
+        "  and the cache is written before this code runs, so it cannot be stopped\n"
+        "  from in here. Set it in the importing process:\n"
+        "      export PYTHONDONTWRITEBYTECODE=1\n"
+    )
+    raise SystemExit(3)
+
+
+# ------------------------------------------------------------------ import guard
+# Importing this file as a module makes CPython write check-entry.cpython-*.pyc
+# into wiki/bin/__pycache__/. A per-script `export PYTHONDONTWRITEBYTECODE=1`
+# prevents that, but only in the scripts somebody remembered to patch - and the
+# two suites I patched were not the only importers, so the directory came back
+# from a repair script an hour later.
+#
+# Setting sys.dont_write_bytecode HERE would be too late: the import machinery
+# compiles and writes the .pyc before this body runs. That fix looks right and
+# does nothing, which is why it is worth writing down rather than rediscovering.
+#
+# So the guard is a refusal instead. An importer that forgets gets a clear error
+# naming the variable, not a silent cache. Run as a script (python3
+# check-entry.py FILE) this never triggers - the cache is only ever written for
+# an IMPORTED module, never for __main__.
+if __name__ != "__main__" and not os.environ.get("PYTHONDONTWRITEBYTECODE"):
+    sys.stderr.write(
+        "check-entry.py: refusing to be imported without PYTHONDONTWRITEBYTECODE=1.\n"
+        "  Importing this module makes CPython write __pycache__/ into wiki/bin/,\n"
+        "  and the cache is written before this code runs, so it cannot be stopped\n"
+        "  from in here. Set it in the importing process:\n"
+        "      export PYTHONDONTWRITEBYTECODE=1\n"
+    )
+    raise SystemExit(3)
+
+
 # Sources of known-live values. Read from disk, never hardcoded.
 SECRET_FILES = {
     "rcon.password": H / "crafty/servers/241920ac-55ce-46c6-aa2f-c42ebf290457/server.properties",
