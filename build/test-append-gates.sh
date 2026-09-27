@@ -147,6 +147,71 @@ if [ "$JA3" -eq "$JB" ] && [ "$SA3" -eq "$SB" ]; then ok "journals still unchang
 else bad "the journals CHANGED: $JB->$JA3, $SB->$SA3"; fi
 if [ -f "$W/journals/ai.lock" ]; then bad "a lock was left behind by the refused run"; else ok "no lock left behind"; fi
 
+hdr "TEST 4: an entry heading dated in the FUTURE must be REFUSED"
+# Why this gate exists: on 2026-09-26 I stamped three entries 00:0x, 00:4x and
+# 00:5x +0630 when the box clock said 23:25. They sat in the journal up to 40
+# minutes ahead of "now" and nothing caught it, because every other gate looks at
+# content and none of them looked at the date. A plausible-looking time written
+# from memory is the same failure as a check that examines the wrong thing: a
+# value asserted instead of read.
+FUT_Y=$(date -d '+2 days' '+%Y-%m-%d' 2>/dev/null || date -v+2d '+%Y-%m-%d')
+if [ -z "$FUT_Y" ]; then bad "cannot compute tomorrow's date on this box - TEST 4 cannot run"
+else
+  printf '\n## %s 09:99 +0630 — TEST 4 synthetic entry, dated in the future on purpose\n\nsynthetic body, no secrets.\n' "$FUT_Y" > /tmp/append-ai.md
+  printf '\n## %s 09:99 +0630 — TEST 4 synthetic shared entry, future-dated\n\nsynthetic body.\n' "$FUT_Y" > /tmp/append-server.md
+  JB4=$(wc -l < "$J"); SB4=$(wc -l < "$S"); M4=$(md5sum < "$J")
+  OUT=$(AI_ID=AI-1 bash "$JA" 2>&1); RC4=$?
+  printf '%s\n' "$OUT" > /tmp/refusal4.txt
+  if [ "$RC4" -eq 127 ]; then bad "journal-append.sh missing - exit 127 is NOT a refusal"
+  elif [ "$RC4" -ne 0 ]; then ok "refused, rc=$RC4"
+  else bad "ACCEPTED a future-dated heading - the gate is not working"; fi
+  if grep -q 'dated in the future' /tmp/refusal4.txt; then
+    ok "the refusal says why (it names the future date)"
+    grep -m2 'AFTER today' /tmp/refusal4.txt | sed 's/^/        /' | cut -c1-120
+  else
+    bad "refused but did not explain itself"
+  fi
+  # It must be refused BEFORE the lock is taken, or a refused run leaves a lock.
+  if grep -q 'ai.lock held' /tmp/refusal4.txt; then
+    bad "it took the lock before refusing - a refused run would leave a lock behind"
+  else
+    ok "refused before taking the lock"
+  fi
+  M4A=$(md5sum < "$J")
+  if [ "$M4" = "$M4A" ] && [ "$JB4" -eq "$(wc -l < "$J")" ]; then
+    ok "the journal is byte-identical: md5 unchanged, $JB4 lines"
+  else
+    bad "the journal CHANGED on a refused run"
+  fi
+fi
+
+hdr "TEST 5: a correctly dated heading is ACCEPTED (and '(time not recorded)' too)"
+# A gate that refuses everything is as useless as one that refuses nothing. Prove
+# the accept path still works, in --verify mode so nothing is written.
+TODAY_NOW=$(date '+%Y-%m-%d %H:%M')
+printf '\n## %s +0630 — TEST 5 synthetic entry, correctly dated\n\nsynthetic body, no secrets.\n' "$TODAY_NOW" > /tmp/append-ai.md
+printf '\n## %s +0630 — TEST 5 synthetic shared entry, correctly dated\n\nsynthetic body.\n' "$TODAY_NOW" > /tmp/append-server.md
+OUT5=$(AI_ID=AI-1 bash "$JA" --verify 2>&1); RC5=$?
+if [ "$RC5" -eq 127 ]; then bad "journal-append.sh missing - exit 127 is NOT a pass"
+elif [ "$RC5" -eq 0 ]; then ok "accepted, rc=0"
+else bad "REFUSED a valid, correctly dated entry - the gate is too strict"; printf '%s\n' "$OUT5" | grep -m3 -E 'FAIL|FATAL' | sed 's/^/        /'; fi
+if printf '%s' "$OUT5" | grep -q 'dated 20'; then ok "the date gate reported the heading as not-in-the-future"
+else bad "the date gate said nothing - it may not have run"; fi
+
+# The honest-gap form must also be accepted, or people will invent times instead.
+printf '\n## %s (time not recorded) +0630 — TEST 5b synthetic, time honestly missing\n\nsynthetic body.\n' "$(date '+%Y-%m-%d')" > /tmp/append-ai.md
+printf '\n## %s (time not recorded) +0630 — TEST 5b synthetic shared\n\nsynthetic body.\n' "$(date '+%Y-%m-%d')" > /tmp/append-server.md
+OUT5B=$(AI_ID=AI-1 bash "$JA" --verify 2>&1); RC5B=$?
+if [ "$RC5B" -eq 0 ]; then ok "accepted '(time not recorded)' - a missing time is honest, so it is allowed"
+else bad "refused '(time not recorded)' - this will push people to invent times, which is the bug"; fi
+
+# And a heading with NO date at all must be refused, not silently accepted.
+printf '\n## no date on this heading at all — TEST 5c synthetic\n\nsynthetic body.\n' > /tmp/append-ai.md
+printf '\n## no date on this heading at all — TEST 5c synthetic shared\n\nsynthetic body.\n' > /tmp/append-server.md
+OUT5C=$(AI_ID=AI-1 bash "$JA" --verify 2>&1); RC5C=$?
+if [ "$RC5C" -ne 0 ]; then ok "refused a heading with no date at all"
+else bad "accepted a heading with no date - an undated entry cannot be ordered"; fi
+
 hdr "restore the real entry files"
 cp /tmp/ta.keep /tmp/append-ai.md
 cp /tmp/ts.keep /tmp/append-server.md

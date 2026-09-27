@@ -169,39 +169,88 @@ else
   SRCS=("$SRC_AI" "$SRC_SV")
 fi
 
-if [ "$VERIFY_ONLY" = "0" ]; then
-  hdr "gate 2: will this entry leak a credential?"
-  # The gate that matters most. The sudo password reached the journal through this
-  # very script, and cleaning it out afterwards cost four sites across three files,
-  # because the redaction tool and its own checker disagreed about which files
-  # existed. Refusing at append time is a one-line fix instead.
-  python3 "$CHECK_ENTRY" "$SRC_AI" "$SRC_SV" || {
-    echo
-    echo "FATAL: refusing to append. Nothing was written."
-    exit 1
-  }
+hdr "gate 2: will this entry leak a credential?"
+# The gate that matters most. The sudo password reached the journal through this
+# very script, and cleaning it out afterwards cost four sites across three files,
+# because the redaction tool and its own checker disagreed about which files
+# existed. Refusing at append time is a one-line fix instead.
+python3 "$CHECK_ENTRY" "$SRC_AI" "$SRC_SV" || {
+  echo
+  echo "FATAL: refusing to append. Nothing was written."
+  exit 1
+}
 
-  hdr "gate 3: is this entry already in the journals?"
-  DUP=0
-  i=0
-  while [ "$i" -lt "${#HEADINGS[@]}" ]; do
-    h="${HEADINGS[$i]}"; f="${FILES[$i]}"
-    n=$(grep -cF "$h" "$f" || true)
-    if [ "${n:-0}" -gt 0 ]; then
-      bad "heading already present in $(basename "$f") ($n occurrence(s))"
-      say "        $h"
-      DUP=$((DUP+1))
-    fi
-    i=$((i+1))
-  done
-  if [ "$DUP" -gt 0 ]; then
-    echo
-    echo "FATAL: this entry is already in the journal. Nothing was written."
-    echo "       If you really meant a second, distinct event, change the heading."
-    exit 1
+hdr "gate 3: is this entry already in the journals?"
+DUP=0
+i=0
+while [ "$i" -lt "${#HEADINGS[@]}" ]; do
+  h="${HEADINGS[$i]}"; f="${FILES[$i]}"
+  n=$(grep -cF "$h" "$f" || true)
+  if [ "${n:-0}" -gt 0 ]; then
+    bad "heading already present in $(basename "$f") ($n occurrence(s))"
+    say "        $h"
+    DUP=$((DUP+1))
   fi
-  ok "neither heading is present yet"
+  i=$((i+1))
+done
+if [ "$DUP" -gt 0 ]; then
+  echo
+  echo "FATAL: this entry is already in the journal. Nothing was written."
+  echo "       If you really meant a second, distinct event, change the heading."
+  exit 1
+fi
+ok "neither heading is present yet"
 
+# --------------------------------------------------------------- gate 3b
+# A heading dated in the FUTURE means the author wrote a plausible-looking time
+# from memory instead of reading the clock. I did exactly that on 2026-09-26:
+# three entries across both journals were stamped 00:0x, 00:4x and 00:5x when
+# the box clock said 23:25. They sat in the record up to 40 minutes ahead of
+# "now", and nothing caught it, because every other gate was about content and
+# none of them looked at the date.
+#
+# This is the same failure as the check-lies, one level up: a value asserted
+# from memory rather than read from the source. A journal whose timestamps are
+# invented is worth less than no journal, because a reader cannot tell which
+# entries to believe.
+#
+# "Unrecorded" is accepted. A missing time is honest; a fabricated one is not.
+hdr "gate 3b: is the heading dated in the future?"
+TODAY=$(date '+%Y-%m-%d')
+FUTUREN=0
+i=0
+while [ "$i" -lt "${#HEADINGS[@]}" ]; do
+  h="${HEADINGS[$i]}"
+  d=$(printf '%s' "$h" | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' | head -1)
+  if [ -z "$d" ]; then
+    bad "heading carries no date at all: $h"
+    say "        use the real clock, or write '(time not recorded)'"
+    FUTUREN=$((FUTUREN+1))
+  elif [[ "$d" > "$TODAY" ]]; then
+    bad "heading is dated $d, which is AFTER today ($TODAY): $h"
+    say "        read the clock: date '+%Y-%m-%d %H:%M %z'"
+    say "        or write '(time not recorded)' - a gap is honest, a guess is not"
+    FUTUREN=$((FUTUREN+1))
+  else
+    ok "dated $d, not in the future"
+  fi
+  i=$((i+1))
+done
+if [ "$FUTUREN" -gt 0 ]; then
+  echo
+  echo "FATAL: refusing to append a heading dated in the future. Nothing was written."
+  echo "       A journal is only worth reading if its timestamps are true."
+  exit 1
+fi
+
+# Gates 2, 3 and 3b run in BOTH modes. They are pure reads - they look at the
+# entry files and the journals and change nothing - so there is no reason to skip
+# them when not writing. Skipping them made --verify worthless: it promised
+# "would this append succeed?", announced preconditions, and then checked nothing
+# that could fail. A dry run that skips the checks is not a dry run.
+#
+# Only gate 1, which takes a lock, and the append itself are gated on VERIFY_ONLY.
+if [ "$VERIFY_ONLY" = "0" ]; then
   hdr "gate 1: take the lock on $LOCKDIR"
   if AI_ID="${AI_ID:-AI-1}" "$AILOCK" take "$LOCKDIR" "appending a journal entry"; then
     LOCK_HELD=1
@@ -255,8 +304,18 @@ while [ "$i" -lt "${#HEADINGS[@]}" ]; do
   h="${HEADINGS[$i]}"; f="${FILES[$i]}"
   n=$(grep -cF "$h" "$f" || true)
   esc=$(grep -c '\\`' "$f" || true)
-  say "$(basename "$f"): $n occurrence(s) of its heading, ${esc:-0} stray escaped backticks, $(wc -l < "$f") lines"
-  [ "${n:-0}" -eq 1 ] || bad "heading count is $n, expected exactly 1"
+  if [ "$VERIFY_ONLY" = "1" ]; then
+    # This is a POST-APPEND check: it asks whether the heading is now in the
+    # journal exactly once. In verify mode nothing was appended, so the answer is
+    # legitimately 0 and demanding 1 reports a failure for something that is
+    # working correctly. It ran unguarded, which is how TEST 5 found it: a valid,
+    # correctly dated entry was refused by a check about a write that never
+    # happened. Note the `n` it found, so the mode's output is not empty.
+    say "verify-only: heading currently appears $n time(s) in $(basename "$f") - expected, nothing was appended"
+  else
+    say "$(basename "$f"): $n occurrence(s) of its heading, ${esc:-0} stray escaped backticks, $(wc -l < "$f") lines"
+    [ "${n:-0}" -eq 1 ] || bad "heading count is $n, expected exactly 1"
+  fi
   [ "${esc:-0}" -eq 0 ] || bad "escaped backticks survived - the markdown is broken"
   i=$((i+1))
 done
