@@ -848,7 +848,7 @@ shape and the wrong field count, and a literal token did not reveal it.
 - `build/crown.sh` — waits on **`#cfgok`**, set only after `verifycfg.sh` passes, instead of on
   `#loaded == 26`. This matters: on v26 the config layer was *half* alive — `admin/rate` and friends
   all worked while `apply_gas` was dead — so a version-number check would have gone green, crowned
-  YOSHIKURO1, and announced a 2× bar on a bar that could not fill at all.
+  the player, and announced a 2× bar on a bar that could not fill at all.
 - `build/journal-append.sh` — had a stray `done` from an earlier refactor and **did not parse at
   all**. Found by syntax-checking every script in `build/` rather than only the ones being changed.
 
@@ -864,7 +864,429 @@ needs an entity for `@s`, so no test at 0 players can cover it. Its correctness 
 `checkcmds.py` and the load-time abort in `deploy.sh`. That is a real gap, stated rather than papered
 over.
 
+### #31 — nine reported defects, all player-facing · **FIXED in v28**
+
+v28 is a behaviour release, not a repair release. v27 fixed two files that could not
+load; v28 changes what the pack *does*. All nine items below came from the same
+report. They are grouped by subsystem rather than numbered 1–9 in the order asked,
+because the interesting content is the reasoning, not the ordering.
+
+#### The push, and why it was a player-only bug
+
+**Symptom.** Crouch-farting did nothing to anybody else. Mobs shoved fine.
+
+**Diagnosis, and the part that is worth not re-deriving.** `push/player` was
+measured working on a chicken: probe v3 drove the real function and read
+`#dx=20 #dz=0 #dist=20 #ux10=300 #vy10=200`, the chicken's `Motion` came back
+`[0.3, 0.2, 0.0]`, and `push/one` — the mob path — was byte-identical. So the
+arithmetic was right and the `Motion` write was accepted. The fault was
+player-specific, and the mechanism is this: **`Motion` on a player is accepted and
+then overwritten by the client's movement packet on the next tick.** A mob's
+velocity is integrated by its own physics and survives; a player's is not
+authoritative, the client is. Nothing in the datapack can make a `Motion` on a
+player stick. That is why the mobs worked and the players did not, and why no
+amount of adjusting the numbers would have fixed it.
+
+**Fix.** `push/player` now writes a **relative `tp`** instead of `Motion`, because
+`tp` is a displacement the server honours rather than an impulse the client
+overwrites.
+
+**The trap in the fix, and the reason for the second new function.** A `tp` is a
+displacement and does *not* decay. `player/press` runs every tick and
+`player/release_gas` calls `push/core` every tick for the whole length of a crouch
+release, so an ungated 0.3-block `tp` would drag a player at 6 blocks a second for
+as long as they held the crouch — nothing like the mob shove it is meant to match.
+Hence **`push/player_cd`**, a per-player counter that shoves on every 5th call
+(4 shoves/second, which reads as being shoved rather than dragged).
+
+It is a **separate function** and that is the entire design point. `push/self` also
+calls `push/player`, and it wants to fire *immediately*: it drives two one-shot
+events, the crouch self-push from `player/press` and the 0.9-block self-launch at
+the end of `world/fart_forced`. Gating those would delay the forced mega-fart's
+launch by up to 5 ticks and could swallow it outright if the counter happened to be
+high. **A gate that silently eats a one-shot is worse than no gate.** The per-player
+counter (rather than a single `#shovecd`) is because one global counter would make a
+crowd shove each other in sequence rather than all at once.
+
+**What is still unverified, and it is the important item.** `probe-shove.sh` proves
+the new `tp` path displaces an entity by exactly the amount the arithmetic predicts,
+and that 5 calls through the gate produce exactly one shove. It does **not** prove a
+player is moved, and it cannot: a player's movement is reconciled with the client
+every tick in a way a chicken's is not, and no test at 0 players can rule that out.
+That reconciliation is the very reason the old path failed, so the probe's own
+subject is the mechanism it cannot test. `tp` is chosen *because* it is the
+primitive the server honours for a player — that is an argument, not a measurement.
+**Someone has to crouch-fart next to somebody and confirm it.** The probe is
+deliberately explicit about this in its own output rather than reporting a green
+result that implies more than it checked.
+
+#### The heal — the one that broke the deploy twice
+
+Requested: crouch-farting heals ½ heart per second. **½ heart = 1 health point, and
+1 HP/second is the target.**
+
+The first thing that is wrong here is the obvious replacement. v27 used
+`effect give @s minecraft:regeneration 100000 0 true` — Regeneration I, which
+restores 1 HP every 50 ticks. That is half a heart every **2.5 seconds** against a
+spec of half a heart every **second**: it was running at a fifth of the intended
+rate, and read as "doesn't work" rather than "is slow" because 0.2 HP/sec is
+roughly cancelled by whatever damage lands at the same moment.
+
+The second, worse thing: `damage @s -1` — the "negative damage heals" trick — **is
+not a valid command.** The amount is a non-negative float:
+
+```
+java.lang.IllegalArgumentException: Whilst parsing command on line 36:
+Float must not be less than 0.0: found -1.0 at position 90: ...damage @s <--[HERE]
+```
+
+I shipped it, and the v28 deploy **installed the pack, reloaded, printed
+`PARSE FAILURES: 0`, and reported `player/press` as FAILED TO LOAD** — aborting
+with "It is live but INCOMPLETE". The server log is the authority here and
+`deploy.sh` caught it, so nothing broken was claimed as working, but a whole
+reload was spent finding out. See the lint section below for why the parse gate
+let it through.
+
+**The heal that works** is a `data merge` on `Health`, driven by a one-line macro
+(`player/heal`), with the number computed by the caller in centi-health points
+and rescaled to a double at the boundary:
+
+```
+execute ... run data get entity @s Health 100      -> #php, integer centi-HP
+execute ... run scoreboard players add #php fart.var 100
+execute ... run store result storage fartpack:data macro.hp double 0.01 run scoreboard players get #php
+execute ... run function fartpack:player/heal with storage fartpack:data macro
+```
+
+Why not `instant_health`, which is the idiomatic heal: it is wrong twice. Instant
+Health I is **+4 HP (2 hearts)** and II is +8 — there is no amplifier that is
++1 HP, so the specified rate cannot be expressed at all. And effects apply on the
+entity's next tick, and this server runs `pause-when-empty-seconds=60`, so at 0
+players **no effect applies and no effect can be tested**. Measured: instant
+health at every amplifier left a chicken at exactly 4.0/4.0 HP. `data merge` and
+`damage` are immediate, so the mechanism is measurable at 0 players — measured:
+0.5→1.5, 1.0→2.0, 2.0→3.0, 3.0→4.0, 3.5→4.5, and three consecutive heals from
+0.5 giving 1.5/2.5/3.5, so half-heart granularity survives the ×100/0.01 round
+trip. Writing above max health **clamps** rather than overflowing, so healing at
+full health is a no-op. A mechanic that cannot be tested has a rate that is a
+guess; this one was measured before it shipped.
+
+Two ordering rules, both learned by getting them wrong first:
+
+- **The reset comes LAST**, not before the `tag remove`. All six lines gate on
+  `fart.healcd matches 20..`, so resetting first means nothing after it ever sees
+  20 and the heal never fires. (An earlier note in `player/press` claimed the
+  reset had to precede the tag removal "to be in time" — that is about a
+  different line, and following it here silently disables the mechanic.)
+- **The caller writes the macro's argument, never the macro itself.** A macro
+  expands in full before any of its lines run, so a `store result` inside the
+  macro would substitute the *previous* player's value.
+
+The second version of this was still dead, and that is the part worth keeping.
+It computed the sum into `#php` and then called a macro reading `$(hp)` from
+`fartpack:data macro.hp` — **a key nothing in the pack ever wrote.** The macro
+would have failed to expand with "Missing argument hp" once a second. The file
+loads, the line parses, the function is called, every gate in this repo reports
+the file as healthy. The rule it broke ("the caller stores the value") was
+written in `player/heal`'s own comment, which is the problem: a rule that lives
+only in a comment is documentation, not a gate. `checkmacro.py` grew a check for
+it — see the gates section below.
+
+**Still unverified, stated rather than hidden:** the sequence is measured on a mob
+at 0 players, never on a real **player**. `data merge entity` accepts players,
+but "accepts players" is not "measured on a player". It also bypasses the
+entity's damage/heal events and does not interact with absorption — a player
+carrying absorption is healed on top of it rather than through it. For a joke
+pack that is the right trade, because the alternative was an unverifiable rate.
+
+#### Hunger
+
+Two separate lines, both removed:
+
+- `player/press` — the per-tick hunger gain while crouch-farting. Deleted.
+- `world/fart_forced` — the `hunger 60 1` on the forced mega-fart. Deleted.
+
+`clouds/sulfuric`'s cloud hunger is **kept**: that is a different mechanic (the
+cloud applies nausea/hunger to whoever stands in it) and removing it would have
+changed a cloud's identity to satisfy a request about crouch-farting. `fart.warn` is
+left in place though nothing reads it — noted rather than churned, because deleting
+it means touching two macros and `verifycfg.sh` for no behavioural gain.
+
+#### The bar standing still
+
+`player/fill_gas` had four cases: moving/not-slowed → 2, moving/slowed → 1,
+still/not-slowed → **1**, still/slowed → 0. The third is now 0. The line that set it
+is **deleted rather than set to 0**, because the file already seeds `#famt` to 0 and
+an explicit `set … 0` would be a second statement of the same fact that can drift.
+
+This is also what makes `player/stress` reachable at all — see that file's note.
+
+#### Empty bar while still crouching
+
+2 hearts/second of damage. `damage` counts **health points, not hearts**: 1 HP = ½
+heart, so 2 hearts/second is `damage @s 4`. The v26 value was `damage 1`, a fifth of
+what was asked for.
+
+#### Colours
+
+The report: *"the colors are random they do not look like farts so yellow, green
+disgusting colors must be used to make them that color."* Decoded rather than
+eyeballed:
+
+| cloud | was | verdict |
+|---|---|---|
+| methane | `#FFAA00` | orange |
+| blessed | `#FFD700` | gold |
+| greensmoothie | `#55FF55` | neon |
+| atomic | `#82002B` | dark magenta |
+| legendary | `#4EFED9` | cyan |
+| goat_signature | `#FFFFFF` | white |
+| sulfuric | `#C0C0C0` | silver — *this is why the palette was computed, not typed; it had been mentally filed as olive* |
+| stinky | `#95D27E` | already in the band |
+| creeper_signature | `#57D061` | already in the band |
+
+Seven of nine were outside the band. All nine are now **G > R > B** — green dominant,
+red substantial, blue near zero. The red component is what separates "sickly
+yellow-green" from "grass"; the near-zero blue is what keeps it off the magic end.
+The rationale lives in `world/cloud_random.mcfunction`, the file that actually
+chooses between these clouds, rather than being copied into nine files.
+
+The two worst offenders were not the odd colours but the `dragon_breath` clouds:
+**that particle is the vanilla spelling of sorcery and no tint turns it into a
+fart.** `atomic` and `legendary` moved to `campfire_cosy_smoke` — the pack's own
+fart particle, which is what `stinky` already used — and `goat_signature`'s `cloud`
+went with them. Kept because they are apt and nobody asked: methane's `flame` (it
+ignites), greensmoothie's `happy_villager` (it *is* called the smoothie), creeper's
+`explosion`, blessed's `end_rod` (the one deliberately pleasant cloud).
+
+#### Titles
+
+`/title` added to `event_surge`, `event_cyclone`, `event_swarm`, `event_blessing`,
+`clouds/legendary`, plus `world/fart_forced`, `player/fart`, `player/stress_hurt`,
+`world/fart_rain_start`, `world/fart_rain_end`. **One title per event.** Two
+screen-wide titles from a single event reads as a bug, not as emphasis. The chat
+`tellraw` is kept alongside every one of them: the title is what you notice while
+playing, the chat line is what you can find again in the scrollback.
+
+Fart-rain's nausea is **deliberately kept**. The complaint was that the rain was
+invisible, and the fix is to make it visible (`world/fart_rain_active` now doubles
+the green dust layer), not to remove the awareness. Removing the nausea would have
+made an unnoticeable feature harmless instead of a noticeable one.
+
+#### Three gates that were wrong, and the two v28 deploys they cost
+
+The v28 release took **three** deploy attempts and the first two aborted. Both
+abortions are worth more than the feature work, because in both cases a gate
+reported a clean verdict about something it had not examined.
+
+**Attempt 1 — a real error, caught before anything was installed.**
+`push/player_cd` line 25, `execute if score @s fart.shovecd matches 1..4 return 0`,
+was rejected with `Incorrect argument for command`. The non-`run` form of
+`execute if` will not take `return`; the server wants `… run <command>`. Asked
+directly over RCON: the `run` form is accepted, the no-`run` form is rejected,
+`return` takes a bare integer (`return 0 1` and `return true` are both rejected).
+`tick.mcfunction:60` already had the `run`; `player_cd` was the only line in the
+pack written without it, and it was written minutes earlier. The caret in the
+error sits past the end of the line and does not name the missing token — the
+same unhelpful failure shape as #30's arity error. This is the gate working as
+designed: `PARSE FAILURES: 1`, nothing deployed.
+
+**Attempt 2 — a gate that passed a line the server cannot load.**
+`damage @s -1` (above) is rejected with `Float must not be less than 0.0`. The
+parse lint reported **`PARSE FAILURES: 0`** for it. The cause is that the lint
+decided success by matching a **fixed allow-list of seven error strings**, and
+"Float must not be less than 0.0" is not one of them:
+
+```python
+PARSE_ERR = ("Unknown or incomplete", "Incorrect argument for command", "Expected",
+             "No variables in macro", "Can't parse function line", "Expected whitespace",
+             "Unknown registry key")
+```
+
+A gate built from an allow-list of known failures **passes anything new by
+default** — it gets weaker exactly when the codebase does something it has not
+done before, which is the only time a lint is worth running. The pack installed,
+reloaded, and the server logged `Failed to load function fartpack:player/press`.
+`deploy.sh` caught *that* and refused to claim success, which is the only reason
+a broken release is not being reported as a good one, but a whole reload was
+spent on it.
+
+The fix is that the list is no longer the mechanism. **Every command-parser error
+the server emits ends in `<--[HERE]`**, whatever the message says, so that one
+substring covers the whole parser family; the strings are kept only for errors
+that never reach the parser (a macro with no variables, an unreadable function).
+Verified against the real responses in both directions — 11 cases, 0 misjudged —
+and then end-to-end on the box: a clean build exits 0, and a build with the
+`damage @s -1` line put back exits 1 and names the file and line.
+
+**Attempt 3 — false positives, from over-correcting.** Broadening the error list
+("Invalid", "Too many", "Out of range", "is not allowed", "Malformed",
+"not a valid") produced **3 false positives on a clean build**. All three were
+bossbar macro instantiations: the lint skips lines containing `bossbar`, but
+`function fartpack:admin/set_max with storage …` contains no such word, and
+executing it *ran the bossbar line inside the macro*. The blind spot was being
+reached a second way. All six added strings were removed — the caret already
+catches real parser errors, and a lint that cries wolf is a lint that gets
+switched off.
+
+The skip is now computed from the tree rather than from the line: find every
+function containing a bossbar command, and skip any line that **calls** one. Two
+bugs lived in that fix and both are the same shape:
+
+- The function-id pattern was `[a-z0-9_.-]+/[a-z0-9_./-]+` — **no colon**. A
+  command's function id is `namespace:path`, so the pattern matched **0 of 84**
+  ids, the skip list never fired once, and the three false positives came straight
+  back. The first run of the "fix" reported "still 3", which reads like a partial
+  success rather than like a fix that never fired.
+- The bossbar-bearing ids were built as file paths
+  (`data/fartpack/function/admin/set_max`) and compared against command ids
+  (`fartpack:admin/set_max`). Zero overlap.
+
+**A skip list that never matches is indistinguishable from no skip list.** Both
+were caught by checking the pattern against the real tree *before* trusting it —
+84 ids matched, 12 of the 13 bossbar functions reached — rather than by reading
+the code and believing it.
+
+#### What each gate can and cannot tell you
+
+| gate | catches | cannot catch |
+|---|---|---|
+| `checkcmds.py` | `scoreboard players` arity; `execute` chains missing `run` | anything about the command after `run` |
+| `checkmacro.py` | a macro line with no `$(var)`; a `$(arg)` no line in the pack ever writes | `with scoreboard` args; a storage written by another pack; whether the write happens *before* the call |
+| `checkrefs.py` | uncallable functions, dangling calls | whether a function does anything when called |
+| `lintpack.py` (live) | anything the server's own parser rejects | load-time errors that are not per-line; bossbar commands (skipped) |
+| `deploy.sh` log scan | `Failed to load function` after reload | anything that loads but does nothing |
+| `simfill.py` | **nothing relevant to v28** | it takes `famt` as a parameter and never opens `fill_gas.mcfunction` — its green result is not evidence about the fill change |
+
+`checkcmds.py` gained the `execute`/`run` check and `checkmacro.py` gained the
+supplied-argument check. Both were verified in **both directions** — clean on the
+fixed tree, failing on a reverted fixture — because a gate that has never been
+seen to fail is a gate whose failure behaviour is unknown. The argument check
+took three attempts and produced 8 false positives before it worked; the fix
+required measuring `with storage`'s addressing on the live server rather than
+assuming it, because **the optional second token is a sub-path prefix** and
+arguments resolve at `storage + prefix + name`. Established both directions:
+writing `fartpack:data macro.pid` and calling `… with storage fartpack:data macro`
+resolves `$(pid)` from `data.macro.pid`, and `fartpack:msg` holding `{name:…}`
+works with one token but answers "Found no elements matching macro" with two.
+
+`checkcmds.py` also carries a second, smaller claim worth stating: "every
+`execute` chain ends in `run`" is *this pack's convention*, not a rule vanilla
+imposes. It has no false positives here and would in a pack written the other way.
+
+#### The world is paused at 0 players, and that changes what can be verified
+
+`pause-when-empty-seconds=60` on this server, so with nobody online **the pack's
+tick function does not run at all**. Measured: `#scan_c` does not advance over
+four seconds. Three consequences that are easy to get wrong:
+
+- **Effects cannot be tested.** `instant_health` at every amplifier left a chicken
+  at exactly 4.0/4.0 HP, because nothing ticks. `damage` and `data merge` are
+  immediate, so they can be. This is why the heal is built the way it is.
+- **`bootstrap` cannot run**, so `#loaded` does not advance by itself. It reached
+  28 only because a probe happened to invoke it. A deploy that waits for the
+  version gate to confirm itself will hang or misreport at 0 players.
+- **Anything requiring a player cannot be verified at all** — which is the case
+  for the shove (§ push above) and for the heal on a real player. Both are
+  documented as unverified rather than measured on a mob and reported as working.
 ---
+
+### #32 — the whole admin config layer has never been callable · **FOUND in v28, NOT FIXED**
+
+Not one of the nine v28 items, and not a v28 regression: this is a **v26-era
+defect** that surfaced while verifying v28, and it is recorded here rather than
+buried in a journal because a whole feature is dead and the comment headers
+still advertise it.
+
+`build/verifycfg.sh` has a section that machine-checks the admin clamps. On its
+first ever completed run it reported **30 failures, every one of them `UNSET`** —
+and the deploy refused to call the version working, correctly.
+
+**The 30 failures were not 30 broken clamps.** The script was issuing a command
+that does not exist:
+
+```
+/function fartpack:admin/rate #cfgtest 2
+    -> Expected a valid unquoted string
+```
+
+**Positional macro arguments cannot be passed as bare command arguments** on this
+server version. Measured — every form rejected, none reached the macro:
+
+| invocation | server says |
+|---|---|
+| `function …/rate #cfgtest 2` | Expected a valid unquoted string |
+| `function …/rate #cfgtest "2"` | Expected a valid unquoted string |
+| `function …/rate "#cfgtest" "2"` | Expected a valid unquoted string |
+| `function …/rate abc 2` | Expected compound tag |
+| `function …/rate abc 2.5` | Expected compound tag |
+| `function …/rate a` (one arg) | Expected compound tag — it wants a **tag path** |
+| `function …/rate` (no args) | runs, then *Missing arguments* |
+| `function …/rate with storage …` | reaches the macro — *Missing argument arg0* |
+
+The grammar, asked for directly, is `function <id> [<tag path>]` or
+`with <storage|scoreboard|entity>`. There is no "two bare words" form. The **only**
+working way to pass `$(arg0)`/`$(arg1)` is a storage that already contains them,
+which is how v28's own `player/heal` does it — measured working:
+
+```
+data modify storage fartpack:data macro set value {"arg0":"Steve","arg1":2}
+function fartpack:admin/rate with storage fartpack:data macro
+```
+
+**Scope: 9 of the 12 files in `admin/` take positional arguments** — `rate`,
+`every`, `cap`, `rel`, `pow`, `reset`, `show`, `recalc`, `resync_bar` — so the
+entire per-player configuration layer added in `50f17cf` *“v26: per-player config
+layer”* (#29) has never been usable. The only places the bare-arg form appears
+anywhere in the pack are **five comment headers**, e.g. `admin/rate.mcfunction:3`
+`#   /function fartpack:admin/rate Steve 2`. Nothing in the pack calls them
+internally, so no tick, no test, and no player had ever exercised the path.
+
+**A second, independent blocker at 0 players**, even with the syntax fixed: every
+setter ends in `$tellraw $(arg0) […]`, and `tellraw` needs a real player, so
+`#cfgtest` cannot stand in for one. `verifycfg.sh`'s own header claimed otherwise
+— *“SCOREBOARD OPERATIONS WORK ON FAKE PLAYERS … Nothing needs to be connected”* —
+and that premise is false for these macros. A fake holder is not a substitute for
+a player when the command targets one.
+
+#### What was changed, and what deliberately was not
+
+- **The 30 checks were not deleted and not relaxed into a pass.** They are
+  replaced by a **detector**: it asserts the documented form is *still* rejected.
+  The day someone fixes the admin layer this gate starts failing and says the
+  clamp sections are worth re-enabling — instead of the fix passing unnoticed,
+  which is exactly how this defect survived v26, v27 and two v28 deploys.
+- **The clamps are now reported as NOT RUN.** Not passing, not failing. No test
+  executed, so there is no verdict to report.
+- **`deployauto.sh` no longer sets `#cfgok` from `verifycfg`'s exit status.**
+  Exit 0 now means only *“nothing this gate can examine is broken”*, and `#cfgok`
+  is the single flag `crown.sh` waits on before telling a player their buff is
+  live. Setting it on that evidence would repeat the exact mistake this entry is
+  about. `#cfgok` stays 0.
+- **`crown.sh` refuses in one second, with the reason.** It used to sit for 5400s
+  waiting for a flag that can no longer be raised. It already verified the config
+  actually applied before announcing, so its safety property held; it just failed
+  slowly and without saying why. Verified: `crown.sh <player>` exits 2, prints
+  the parser error, announces nothing, and that player's scores are untouched
+  (`rate 1`, `pow 30` — both stock).
+- **`verifycfg.sh` section 0a is now bounded to the last reload.** It was
+  `grep -c`ing the whole of `latest.log`, and a reload does not clear the log, so
+  it counted the two earlier broken v28 deploys and reported 4 load failures
+  against a reload where `player/press` loads perfectly. It now finds the last
+  `Reloading!` line and scans only what follows — and when it **cannot** find
+  that bound it fails rather than falling back to counting history, because a
+  check that cannot say what it examined must not return a pass.
+
+#### The fix, for whoever picks it up
+
+Convert the setters to take the player as `@s` and the value from a scoreboard,
+so no macro argument is needed — e.g. an admin types
+`/scoreboard players set Steve fart.rate 2` and then a non-macro
+`fartpack:admin/rate_apply` reads `@s` and derives `fart.leg`/`fart.warn` from it.
+That keeps the clamps, the derivations and the read-back, and it works with
+`execute as` so `admin/reset`, `admin/show` and `admin/resync_bar` become
+testable too. Re-enable `verifycfg` sections 2–6 against a real player at the
+same time, or the arithmetic stays unverified for a third release.
 
 ## 2b. v25 — the weather and event port
 

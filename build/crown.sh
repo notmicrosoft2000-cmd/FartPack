@@ -53,6 +53,42 @@ get() {
 # in any way, that flag is 0 and this script refuses - which is the correct
 # outcome, because the alternative is telling a player their buff is live when
 # it is not.
+# CAN THE ADMIN LAYER EVEN BE CALLED? Checked before waiting, because #cfgok is
+# now never set at 0 players and this loop would otherwise sit for 90 minutes
+# waiting for a flag that cannot arrive. That is not a safety property, it is a
+# way of making the operator wait to learn something already known.
+#
+# Measured on this server: positional macro arguments cannot be passed as bare
+# command arguments, so `function fartpack:admin/rate <name> <n>` is REJECTED by
+# the parser - "Expected a valid unquoted string" - and never reaches the macro.
+# Nine of the twelve files in admin/ take positional args, including both
+# commands this script exists to run. See BUGS-AND-FIXES.md #32.
+#
+# So the probe below is not a formality. If the documented form is rejected the
+# crown cannot be applied, and refusing now - in one second, with the reason - is
+# strictly better than waiting out the timeout and failing with "the config layer
+# never verified", which is true but does not say why.
+echo "=== can the admin commands be called at all? ==="
+probe=$(rcon "function fartpack:admin/rate __crown_probe__ 2" 2>&1)
+if printf '%s' "$probe" | grep -qiE 'Expected|Incorrect argument'; then
+  echo "  REFUSING: 'function fartpack:admin/rate <player> <n>' is rejected by the parser."
+  # rcon.py echoes the command back with a leading "> " before the server's
+  # reply, so head -1 shows the echo rather than the error. Skip those lines:
+  # a refusal that quotes its own command back is not an explanation.
+  echo "  response: $(printf '%s' "$probe" | grep -v '^>' | head -1 | cut -c1-100)"
+  echo
+  echo "  $WHO is NOT crowned, and NO announcement was made. Nothing was changed."
+  echo
+  echo "  A crown promises a 2x bar. Setting it needs admin/rate, and admin/rate"
+  echo "  cannot currently be invoked, so the promise would be empty. This script"
+  echo "  refuses rather than announce something untrue - which is the same"
+  echo "  property it has always had, just reached sooner and with a reason."
+  echo
+  echo "  Fix: BUGS-AND-FIXES.md #32, then re-run this script."
+  exit 2
+fi
+echo "  ok  the admin invocation form is accepted."
+echo
 echo "=== waiting for the verified config layer (max 5400s) ==="
 t=0
 while [ "$t" -lt 5400 ]; do

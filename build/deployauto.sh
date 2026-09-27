@@ -151,12 +151,28 @@ if [ $rc -ne 0 ]; then
   echo "admin config layer is NOT verified - treat the /function commands as suspect."
   echo "#cfgok stays 0, so crown.sh will not announce a buff that is not working."
 else
-  # Only now is the config layer known to work. This flag is the single piece of
-  # evidence crown.sh waits on, so it is set here and nowhere else - after a
-  # passing verification, and never optimistically.
-  python3 /tmp/rcon.py 'scoreboard players set #cfgok fart.var 1' >/dev/null 2>&1
-  echo "#cfgok set to 1 - config layer verified."
-  CFGOK=1
+    # DELIBERATELY NOT SETTING #cfgok HERE, which reverses what this block used to
+    # do, and the reason is the whole of BUGS-AND-FIXES.md #32.
+    #
+    # verifycfg.sh used to exit 0 only when it had genuinely exercised the admin
+    # clamps. It cannot any more, and it cannot at 0 players at all: the documented
+    # invocation form does not parse, and every setter tellraws its target, so a
+    # fake scoreboard holder is not a substitute for a player. Exit 0 now means
+    # only "nothing this gate is able to examine is broken".
+    #
+    # Setting #cfgok on that would be claiming the config layer works on the
+    # strength of a check that never touched it, and #cfgok is the single flag
+    # crown.sh waits on before telling a player their buff is live. So #cfgok stays
+    # 0, crown.sh refuses, and nobody is told a buff is live when it cannot be set.
+    # That is the outcome crown.sh's own header says it exists to produce: a
+    # refusal beats announcing a promise with nothing behind it.
+    #
+    # Raising #cfgok to 1 requires a real player online, a working /function
+    # invocation, and verifycfg sections 2-6 re-enabled - i.e. the admin layer
+    # fixed first. Until then no deploy may set it.
+    echo "#cfgok stays 0 - the admin clamps were NOT exercised (BUGS-AND-FIXES.md #32)."
+    echo "crown.sh will refuse, so no player is told a buff is live when it cannot be set."
+    CFGOK=0
 fi
 
 echo
