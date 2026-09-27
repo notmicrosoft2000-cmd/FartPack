@@ -1288,6 +1288,228 @@ That keeps the clamps, the derivations and the read-back, and it works with
 testable too. Re-enable `verifycfg` sections 2–6 against a real player at the
 same time, or the arithmetic stays unverified for a third release.
 
+### #33 — v29: two v28 regressions, four dead features, three new ones · **FIXED in v29**
+
+Everything below is either a defect measured on this server or a feature whose
+implementation is measured. Where something could not be verified from here it
+says so, and where a first attempt was wrong it says that too.
+
+#### #33a — crouch healing was invisible · **v28 regression**
+
+`player/press` set `fart.healing` while crouched and removed it only on standing
+up (lines 89–92). But the gas bar drains during the crouch, so the trace went
+
+```
+8.0 → 9.0 → 5.0     net −3.0 HP/sec
+```
+
+Healing worked, then the strain damage in the same second took it straight back,
+and the player saw nothing but a number going down. The cause is that the empty
+tank was still being charged at `#power 24` per tick, so an empty bar *caused* the
+strain that cancelled the heal.
+
+Fixed by three lines in `player/press`, each gated on `fart.pressure matches 1..`:
+reset `fart.healcd 0`, remove `fart.healing`, remove `fart.healtick`. `healtick`
+is in that list deliberately — leaving it set is what turns an empty tank into a
+per-tick self-inflicted shove at lines 85–86.
+
+#### #33b — straining while moving dealt no damage · **v28 regression**
+
+`player/stress` forgave the strain on a movement delta. The comment claimed it
+read the delta "exactly as `player/fill_gas` reads them", and that was false:
+`fill_gas` **negates** the delta first (`#dx *= #neg1`) and only then tests
+`matches 1..`, which forgives a *negative* (moving backwards). `stress` tested the
+raw delta, so `matches 1..` forgave **forward** motion and punished standing still.
+
+Measured, one fresh cow per trial, because `damage` grants ~0.5 s of hurt immunity
+and a reused fixture reads exactly like "the mechanic does nothing":
+
+| delta | result |
+|---|---|
+| +50 (forward) | **no damage** |
+| −50 (backward) | −4.0 HP |
+| 0 (still) | −4.0 HP |
+
+`HurtTime` went 0→10 on exactly the two damaging trials, confirming the reads were
+real and not a scoring artefact.
+
+Fixed by deleting the six delta commands (`#sdx`/`#sdz`/`#smx`/`#smz`) outright
+rather than negating them. The user asked for the movement escape hatch to be
+gone, and a negated copy of a private set of variables is more machinery than the
+thing it replaces. All four were private to that file, so nothing dangles.
+`fart.lastx`/`fart.lastz` are `fill_gas`'s and were left alone.
+
+#### #33c — every death message was the generic fallback
+
+The pack shipped **no `lang` file at all**. The two custom damage types
+(`fartpack:atomic_gas`, `fartpack:legendary_gas`) both carry a `message_id`, both
+resolved to nothing, and the player got the plain "X died" text. `data/fartpack/lang/en_us.json`
+now exists with both keys, named `death.attack.fartpack.<message_id>`.
+
+The user asked for `/damage` with custom parameters. **New custom damage types
+cannot be delivered this way, and that is a measured dead end, not a preference:**
+registering a new `damage_type` needs a world restart, not `/reload`. A probe pack
+containing a byte-for-byte valid control type failed to register exactly as the
+invalid one did. A restart is the superuser's call, and it is not worth spending
+on a cosmetic change that the deploy gate **cannot verify** — an unresolvable
+damage type is a *runtime* error, so the function still loads, `failed function
+loads: 0` stays green, and the pack throws once a second with nothing to catch it.
+
+So the extra variety comes from damage types the server already has. Confirmed
+present, with the check proven able to report absence (it correctly rejects
+`minecraft:bad_omen` and `minecraft:with_fire`, which do not exist here):
+`minecraft:explosion`, `minecraft:dragon_breath`, `fartpack:atomic_gas`,
+`fartpack:legendary_gas`. `player/stress_hurt` now rolls `random value 1..4`
+between them.
+
+#### #33d — the clouds were never yellow, and re-tuning the colour could not have fixed it
+
+v28 had already shipped a yellow-**green** `#9EC11A` and the user still saw a
+non-yellow cloud. The reason is that `custom_particle` **forces** a particle type
+per cloud, and every one of those carries its own fixed colour:
+
+| particle | renders as | used by |
+|---|---|---|
+| `campfire_cosy_smoke` | grey | stinky, atomic, legendary, goat_signature |
+| `campfire_signal_smoke` | grey | sulfuric |
+| `happy_villager` | green | greensmoothie |
+| `end_rod` | white/gold | blessed |
+| `flame` | orange | methane |
+| `explosion` | grey | creeper_signature |
+| `dragon_breath` | magenta | fart_forced |
+
+A forced particle is not tinted by the cloud's colour, so
+`potion_contents.custom_color` never reached the screen. Changing the hex value
+was a no-op dressed up as a fix. All ten AECs now use `minecraft:effect`, the
+vanilla particle that *does* render in the cloud's colour, with a yellow
+`custom_color`.
+
+**The trade-off, stated plainly:** vanilla has no tinted *smoke* particle — `smoke`
+and both campfire smokes are grey whatever colour is set. "Smoke" and "yellow"
+cannot both be had. The user asked for yellow twice; this is yellow, and it is a
+one-word revert per file if they want grey smoke back.
+
+A tenth cloud was found outside `clouds/`: `world/fart_forced` had a Radius-8
+dragon-breath cloud in mint `#4EFED9`. It is yellow now too.
+
+**Discarded first attempt:** an earlier pass added a top-level `Color:` field to
+all nine clouds "so the next failure would be unambiguous". Measured: the server
+stores no such field and `data get entity … Color` reports no elements, so it was
+silently discarded — dead weight implying a control it did not have. Removed.
+(With the honest caveat that my "must survive" control, `Particle:`, also failed
+to round-trip, so the test cannot strictly prove `Color:` is absent rather than
+merely unset. What it does prove is that `Color:` does nothing.)
+
+#### #33e — `camera_shake` was not a camera shake, and rotation jitter is impossible here
+
+The whole function was one line: `effect give @a[…distance=..3] minecraft:nausea 2 0`
+— two ticks, amplifier 0, bystanders only. The person who farted felt nothing.
+
+The honest implementation would jitter the player's `Rotation`. Five mechanisms
+were measured; all five are dead ends, recorded here so nobody re-derives them:
+
+| mechanism | result |
+|---|---|
+| `tp <t> ~ ~ ~ #scoreholder ~` | runtime error — `RotationArgument` is a plain double and, unlike the x/y/z slots, takes no score holder |
+| `tp <t> ~ ~ ~ $(macro) ~` | will not **load** — `Incorrect argument for command at position 6: tp @s` |
+| `tp <t> ~ ~ ~ 47.0 ~` | works, but nothing can compute the `47.0` |
+| `data merge entity <t> {Rotation:[47.0f,-20.0f]}` | **works** — seed 45/−20 reads back exactly `[47.0f, −20.0f]`, pitch preserved — but needs a literal |
+| `data merge entity <t> {Rotation:[$(macro).0f, …]}` | will not **load** — `Expected literal B at position 32` |
+
+So macros work inside NBT in *some* commands (v28's `player/heal` merges `$(hp)`
+into `Health`) and inside JSON text, but never in a coordinate, a rotation, or an
+NBT list element. Both ends of the computation are unavailable, which makes this
+impossible rather than awkward. Same family as #32.
+
+Nausea is therefore not a fallback — it is the only camera-wobbling lever a
+datapack has here. What changed is that it is turned up: it now reaches the farter,
+lasts 1–2 s instead of a fifth of one, and scales with the fart's own `fart.pow`,
+so a boss fart hits like a boss.
+
+Also measured on the way: a literal negative in `scoreboard players add` is
+rejected at load (`Integer must not be less than 0`). Use `remove`.
+
+**NOT VERIFIED:** the world is paused at zero players, so how any of this *looks*
+cannot be checked from here. Same class as #28.
+
+#### #33f — "Total Farts" was one global counter, not a leaderboard
+
+`fart.total` was only ever incremented on the fake player `#stats`
+(`world/fart_entity:1`, `world/fart_block:18`). There was no per-player counter at
+all, so the sidebar showed a single line — a global total wearing a leaderboard's
+name. The user was right that it needed remaking.
+
+* `fart_entity:1` now credits the farter, `if entity @s[type=minecraft:player]`.
+* Block farts have no owner to credit, so they go to a new **undisplayed**
+  `fart.blocks` rather than pretending to be a player.
+* `#stats` is `reset` off `fart.total` — `set … 0` would have left a zero-scoring
+  fake player sitting at the bottom of the board forever.
+* The heading needed `scoreboard objectives **modify** … displayname`. Editing the
+  `objectives add` line changed nothing on the live server, because `add` is a
+  no-op on an objective that already exists. Caught by the lint's response census,
+  which still read `Total Farts` after a bootstrap run.
+
+**NOT VERIFIED:** vanilla sidebar sort order cannot be observed without a client.
+Whether it sorts high-to-low needs a human to confirm; if it is inverted, the fix
+is one line in bootstrap.
+
+#### #33g — new: the Fart King and the spawn book
+
+**Fart King.** The crown goes to the highest `fart.total`, and a tie is broken for
+whoever got there first. That is implemented as **strictly greater** and nothing
+else: a challenger must *beat* the incumbent, not match them, so the incumbent
+keeps a tie. No timestamps, no join order, no float equality to get wrong. The
+winner is unique because the first player to beat the bar raises it, so the next
+player must beat *that*.
+
+"2× more" is `fart.rate 2`, the pack's own gas multiplier, **not** extra
+leaderboard credit — reading `player/apply_gas`, `#famt` is added once for any
+non-zero rate and once more per step from 2 up, so rate 2 applies it twice: double
+pressure, harder farts. Crediting the king extra points would have made the
+leaderboard lie, since he would climb the very board he is meant to be leading.
+
+The incumbent's total is read from whichever **online** player holds the
+`fart.king` tag, so a crown is never held by someone who is not in the world. The
+cost of that is handled in `core/on_join`: a returning ex-king still holds the tag
+and still holds `fart.rate 2`, so on join they are demoted and must win it back —
+otherwise they would walk in as an uncrowned, double-rate player and `king/crown`
+would not notice, because the tag still says they are king.
+
+**Spawn book.** `written_book[minecraft:written_book_content={title,author,pages}]`,
+measured rather than written from memory, because a malformed item is a runtime
+error on *every join* and the load gate cannot see it. The probe put each
+candidate through `item replace block <chest> container.0` and read the block
+entity back; `minecraft:not_a_real_thing={…}` is **rejected** ("Unknown item
+component") and `{title:5}` is **rejected** ("Malformed … No key author"), which
+is what makes the two acceptances mean something.
+
+Handed out once, gated on a `fart.got_book` tag. There is no way to ask "does this
+player already own a book" from a function — a player's inventory is not readable
+as entity NBT — so a rejoin would otherwise stack a second copy.
+
+`core/on_join` does the crown repair **before** the book, on purpose: a `give` that
+throws aborts the rest of its function, so this way a broken book can only ever
+cost the player their book, never their in-game state.
+
+**NOT VERIFIED:** the book's page contents and the crown's feel both need a human
+in the world.
+
+#### Two gates that were wrong before the work was
+
+Recorded because both would have shipped a broken v29:
+
+* `scoreboard players operation #kbest fart.var = #mine` — the **source objective
+  is required on both sides**. The lint caught it: `Unknown or incomplete command`.
+* `tag @a[remove=fart.king_new]` — there is no `remove=` selector option on this
+  server. The command form is `tag @a remove fart.king_new`. Caught twice.
+
+And one gate of my own that reported a verdict about something it never
+examined: the first written-book probe used a horse's `weapon.0` slot, which does
+not exist ("Unknown slot"), so every case aborted before the item NBT was parsed —
+and the case-match labelled all five **rejected** cases as "accepted". A chest
+fixed the fixture; the two rejections above are what make that run trustworthy.
+
+
 ## 2b. v25 — the weather and event port
 
 An independent fork of this pack (v18-era, pre-Pass-A) was found with a lot of new content and none
