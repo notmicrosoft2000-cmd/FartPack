@@ -34,8 +34,18 @@ confirmed from the live URL.
 
 ## Datapack (LIVE)
 
-    #loaded = 20
-    file/fartpack.zip, 11 packs enabled, 0 "Failed to load" at last boot
+    #loaded = 33
+    file/fartpack.zip, 10 packs enabled, 0 "Failed to load" at last boot
+
+    artifact  /home/neptune/Documents/Fartpack/fartpack-latest.zip
+    sha1      2908142ba19863b3c835e894972e07da68691da1
+    files     110, build verified deterministic (two builds byte-identical)
+
+v33 removed the entire age/weight/gender profile system — 10 `.mcfunction` files,
+9 scoreboard objectives, 6 call sites — and added: the live percentage on the
+bossbar name (`fart.pct`, arithmetic verified over RCON across caps 60–180 and an
+over-cap clamp), the near-full warning at 80% of the player's OWN cap
+(`fart.near`), crouch blocking gas *inflow*, and two actionbar lines deleted.
 
 The datapack is not versioned by URL, so it has no equivalent trap: deploying it
 is a matter of installing the zip and reloading. `build/deploy.sh` compares the

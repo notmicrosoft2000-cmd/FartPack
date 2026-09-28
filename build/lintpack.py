@@ -2,7 +2,6 @@ import sys,socket,struct,os,subprocess,time,glob,re
 SID="241920ac-55ce-46c6-aa2f-c42ebf290457"
 pw=[l.split("=",1)[1].rstrip("\n") for l in open(os.path.expanduser("~/crafty/servers/%s/server.properties"%SID)) if l.startswith("rcon.password=")][0]
 host=subprocess.check_output(["docker","inspect","-f","{{range $k, $v := .NetworkSettings.Networks}}{{if $v.IPAddress}}{{$v.IPAddress}}{{end}}{{end}}","crafty"]).decode().strip()
-s=socket.create_connection((host,25575),timeout=5); s.settimeout(30)
 def pk(i,t,p):
     pl=struct.pack("<ii",i,t)+p.encode()+b"\x00\x00"; return struct.pack("<i",len(pl))+pl
 def rd():
@@ -16,8 +15,20 @@ def rd():
     if len(b)<8: return None,None
     i,t=struct.unpack("<ii",b[:8])
     return i,(b[8:ln-2].decode(errors="replace") if ln>10 else "")
-s.sendall(pk(19,3,pw))
-if rd()[0]!=19: sys.exit("AUTH FAILED")
+# CONNECT IN A FUNCTION, so it can be called again. The original opened one socket
+# at module scope and drove the whole lint through it - around 1200 commands and
+# several minutes on a single connection. Minecraft's RCON handler runs on one
+# thread behind a queue and is free to close a long-lived connection, and it does:
+# the v31 lint died with BrokenPipeError partway through and took the whole gate
+# with it. The gate correctly refused to deploy, but it refused for the wrong
+# reason and produced no verdict about the pack at all, which is the least useful
+# outcome a pre-deploy gate has.
+def connect():
+    global s
+    s=socket.create_connection((host,25575),timeout=5); s.settimeout(30)
+    s.sendall(pk(19,3,pw))
+    if rd()[0]!=19: sys.exit("AUTH FAILED")
+connect()
 
 ROOT=sys.argv[1]
 # HOW A LINE IS JUDGED TO HAVE FAILED - and this list used to be the whole
@@ -68,10 +79,60 @@ BENIGN=("No entity was found","No player was found","No players were found",
         "Nothing was selected","No block was found","No objective was found",
         "Test failed","already exists by that name","Summoned new")
 n=0
+# Returned by run() when a line could not be checked even after a reconnect. It
+# is a prefix rather than a value so the main loop can tell "the server said
+# nothing" from "we never got to ask" - and those are opposites for a gate.
+UNK="LINT_UNCHECKED_RCON_LOST"
+# THE MEASURED RCON COMMAND LENGTH LIMIT, and the reason it is a constant rather
+# than something worked out inline.
+#
+# This server silently drops the connection on any command longer than roughly
+# 1450 characters. Measured, not guessed: build/probe-threshold.py binary-searches
+# the boundary with real `give` commands padded with real pages, and the samples
+# were 1433 chars SILENT (accepted) and 1455 chars LOST, with the control command
+# answering on every call. The exact number is not round, which is consistent with
+# an RCON buffer somewhere in the stack rather than a documented protocol limit.
+#
+# WHY IT MATTERS ENOUGH TO ENCODE. The v31 lint hit this on the profile/book give
+# line, a 2149-character book, and reported it as a parse failure with the
+# connection dying twice - which reads as "the pack is broken" when the truth is
+# "the gate could not carry the line". A gate that blames the code for its own
+# transport limit sends the next person to rewrite a book that was fine.
+#
+# SO: an over-long line FAILS, loudly, with a message that says what to do about
+# it. It is deliberately not a skip - a skip is how a line ends up never examined
+# while the report still reads clean, which is the entire failure this file exists
+# to prevent. Failing closed costs an author one edit; passing silently costs a
+# version.
+#
+# The v30 spawn book is 846 characters and is comfortably inside this. Keep new
+# lines inside it, and if something genuinely cannot be short enough, it needs a
+# load-time or runtime check of its own, not a hopeful lint.
+RCON_MAX=1400
 def run(c):
     global n; n+=1
-    s.sendall(pk(n,2,c)); time.sleep(0.06)
-    return (rd()[1] or "").strip()
+    for attempt in (1,2):
+        try:
+            s.sendall(pk(n,2,c)); time.sleep(0.06)
+            r=rd()
+            if r[0] is None: raise OSError("empty response, server closed the connection")
+            return (r[1] or "").strip()
+        except OSError as e:
+            # BrokenPipeError, ConnectionResetError and socket.timeout are all
+            # OSError subclasses, so this catches the whole family including ones
+            # that do not exist on this platform yet.
+            #
+            # A retry re-executes a line that may already have run, which is
+            # acceptable HERE and only here: the lint's job is to ask the parser
+            # whether a line is well formed, and the lines it replays are scoreboard
+            # writes and tag operations whose repeat is a no-op or a duplicate that
+            # the next line overwrites. It would not be acceptable in a gate with
+            # side effects, and the comment is here so nobody copies the pattern.
+            if attempt==2: return "%s (%s)" % (UNK, e)
+            sys.stderr.write("  [lint] rcon dropped on line %d (%s); reconnecting\n" % (n, e))
+            try: s.close()
+            except OSError: pass
+            connect()
 
 fails=[]; checked=0; skipped=0
 census={}
@@ -148,8 +209,26 @@ for path in _files:
         _c=_CALL.search(cmd)
         if _c and _c.group(1) in _boss:
             skipped+=1; continue
+        # Over-long lines are rejected BEFORE being sent, so this is a verdict
+        # about the line rather than an observation of the transport failing.
+        if len(cmd)>RCON_MAX:
+            fails.append((os.path.relpath(path,ROOT), i, raw,
+                          "LINE IS %d CHARS, OVER THE MEASURED %d-CHAR RCON LIMIT - "
+                          "NOT CHECKED AND NOT PARSED. Shorten it; the gate cannot "
+                          "carry it and will not pretend otherwise."
+                          % (len(cmd), RCON_MAX)))
+            continue
         checked+=1
         out=run(cmd)
+        # AN UNCHECKABLE LINE IS A FAILURE, not a pass and not a skip. Silently
+        # dropping it would restore the exact failure this file exists to prevent:
+        # a line that was never examined reported as clean. The lint would go on to
+        # print PARSE FAILURES: 0 over a build it had only partly looked at, and
+        # that sentence is trusted.
+        if out.startswith(UNK):
+            fails.append((os.path.relpath(path,ROOT), i, raw,
+                          "RCON lost twice - THIS LINE WAS NOT CHECKED, not passed"))
+            continue
         bad = any(e in out for e in PARSE_ERR) or CARET in out
         if bad:
             fails.append((os.path.relpath(path,ROOT), i, raw, out))
@@ -192,11 +271,15 @@ for path in _files:
                 shape=re.sub(r"\s+"," ",shape).strip()
                 n,ex=census.get(shape,(0,out))
                 census[shape]=(n+1,ex)
-s.sendall(pk(999,0,"")); s.close()
+try: s.sendall(pk(999,0,"")); s.close()
+except OSError: pass
 print("lines parse-checked: %d   (skipped %d bossbar lines, direct or via a macro call)"
       % (checked, skipped))
 print("bossbar-bearing functions found: %s" % (", ".join(sorted(_boss)) or "none"))
 print("PARSE FAILURES: %d\n" % len(fails))
+_unc=sum(1 for f in fails if f[3].startswith("RCON lost"))
+if _unc:
+    print("  of which %d were NOT CHECKED (rcon lost), not parser verdicts.\n" % _unc)
 for p,i,raw,out in fails:
     msg=" | ".join(l.strip() for l in out.splitlines() if l.strip() and not l.startswith("----"))
     print("%s:%d\n   %s\n   -> %s\n" % (p,i,raw,msg[:220]))

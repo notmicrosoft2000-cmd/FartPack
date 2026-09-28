@@ -108,6 +108,24 @@ echo "--- any new errors in the last 60 log lines ---"
 tail -60 "$SRV/logs/latest.log" 2>/dev/null \
   | grep -iE 'error|exception|failed' | tail -20 || echo "  (none)"
 
+# v33: WARNINGS ARE NOT ERRORS, AND A PACK OWNED BY THIS REPO SHOULD NOT EMIT ANY.
+#
+# The check above missed `[WARN]: Invalid path in datapack:
+# fartpack:function/profile/REMOVED-v33.md, ignoring` - a line containing none of
+# error/exception/failed. It was INERT ("ignoring"), the pack worked, PARSE
+# FAILURES was 0, and every gate said clean. But it printed on every single
+# reload forever, which is precisely how a warning becomes invisible: a log line
+# that is always there stops being read, and the next line that matters goes
+# with it.
+#
+# Scoped to `fartpack` on purpose. The server runs EasyAuth, Dynmap, Graves and
+# several Fabric mods, and they emit their own warnings on every start. Flagging
+# all of them would mean this section is always red, and a gate that is always
+# red is a gate nobody reads. Only warnings naming THIS pack are a defect.
+echo "--- WARN lines naming fartpack (we own these; there should be none) ---"
+tail -60 "$SRV/logs/latest.log" 2>/dev/null \
+  | grep -iE 'warn' | grep -i 'fartpack' | tail -20 || echo "  (none)"
+
 echo
 echo "--- weather state after bootstrap ran (all should read cleanly) ---"
 for v in '#raining' '#rain_c' '#rain_cd' '#rain_dur' '#rain_tick' '#event_cd'; do

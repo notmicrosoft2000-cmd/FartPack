@@ -95,6 +95,11 @@ for tagname in ("load", "tick"):
 # so nothing in the pack can ever call it. show_one, resync_bar, recalc and
 # defaults are reached from those macros and are listed because checkrefs walks
 # function calls, not the fact that a macro's caller supplies the arguments.
+# v31 added the profile/* set. stats and book are typed by a PLAYER with no
+# arguments at all - they are the documented half of the profile interface, the
+# book in the player's hand and the readout in chat - so they are manual entry
+# points in exactly the same sense. apply, awful, skip, ensure, nag, nag_all,
+# remind and triggers are all reached from the tick path and are NOT listed.
 MANUAL = {
     "fartpack:items",
     "fartpack:items/give",
@@ -111,6 +116,8 @@ MANUAL = {
     "fartpack:admin/set_max",
     "fartpack:admin/show",
     "fartpack:admin/show_one",
+    "fartpack:profile/book",
+    "fartpack:profile/stats",
 }
 entrypoints |= MANUAL
 import glob

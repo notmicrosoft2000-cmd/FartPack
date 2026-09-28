@@ -71,8 +71,38 @@ cannot fail is worse than no test, because it gets reported as a pass.
   a list and count commas.
 - **`say` is not captured by rcon.py.** Assert with `data get` or `scoreboard
   players get` instead.
+- **"No error" is a weak signal, and a malformed control is the only thing that
+  makes it strong** (#34). On this server a text component naming a nonexistent
+  scoreboard objective is *accepted silently*, so a probe that only checks "did the
+  server complain" will call a broken thing healthy. Every negative control must be
+  malformed in a way the server actually rejects.
+- **But a control that fails only proves the probe CAN fail — never that the
+  positive case works.** A probe can establish that the *parser* accepts a
+  component and be used to conclude the *renderer* prints what you meant; it
+  rendered a player's username where a number belonged, in three files, and passed
+  every gate, because the command succeeded. Rendering is the one thing RCON
+  cannot read back: state acceptance as acceptance, and anything about what a
+  player actually sees as needing a human glance.
 - **Reading one RCON packet silently truncates.** `rcon.py` drains to the type-2
   terminator; do not hand-roll a single `recv`.
+- **`rcon.py` burns 25 SECONDS on every error response.** It loops reading packets
+  until it sees the success terminator; a rejected command returns as a different
+  packet type, so the loop runs to the socket timeout instead of returning. A
+  batch of 30 valid-looking commands with 21 bad ones takes ~9 minutes, not
+  ~20 seconds — and the symptom is a *timeout*, not an error, so it reads as
+  "the script hung" rather than "you sent a bad command". Three separate
+  verification scripts hung on this in one session. Causes hit so far, all
+  invisible in the command list:
+  - `scoreboard objectives add X` when `X` already exists → "already exists".
+    Add objectives ONCE, not inside a per-case loop.
+  - printing `EXPECT …` / `#note` annotation lines into the same array that is
+    passed to `rcon.py`, so they were sent to the server as commands.
+  - `rcon.py` takes **each argv as a separate command**. `rcon.py scoreboard
+    players get #loaded fart.var` sends six commands, starting with a bare
+    `scoreboard`, and hangs. Quote the whole thing:
+    `rcon.py 'scoreboard players get #loaded fart.var'`.
+  Rule: in any batched RCON call, every element must be a command that is
+  expected to succeed, or the script hangs instead of failing.
 - **A `#` mid-line is not a comment.** It is a scoreboard fake-player name
   (`#scan_c`, `#loaded`). Only a `#` in the leading whitespace starts a comment.
   Stripping from the first `#` deletes the entire 30-tick cycle from your own

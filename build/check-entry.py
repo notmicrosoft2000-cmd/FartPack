@@ -226,6 +226,66 @@ def token_re(secret):
     )
 
 
+# ---------------------------------------------------------------- allowlist
+#
+# A credential gate that blocks a legitimate push gets bypassed, and a bypassed
+# gate stops being a gate. So a false positive has to be fixable - but NOT by
+# loosening the pattern, because "I widened the detector so my own commit would
+# pass" is the single most dangerous thing anyone can do to a security check.
+#
+# So there is no pattern relaxation here. Each entry is ONE file, ONE line, ONE
+# reason, and the tool PRINTS it every run rather than staying quiet. If the
+# real reason for an entry ever stops being true, the entry is visible and
+# greppable, which a loosened regex is not.
+#
+# Each entry must carry a `verify` command that PROVES the absence of the secret
+# by comparison, not by reading the source and believing it. "it is only a config
+# key name" is exactly the sentence that has hidden a real leak before.
+ALLOWLIST = {
+    ("lintpack.py", 3):
+        # The suppression is keyed on (basename, line) AND on this substring
+        # still being present on that line. That third condition is the whole
+        # point. Keying on the line number alone grants a PERMANENT BLANKET
+        # EXEMPTION to whatever ends up on line 3 of that file - I verified that
+        # by replacing line 3 with `password=hunter2xyz` and watching the gate
+        # print ALLOWED and exit 0. Pasting a real secret there would have
+        # sailed through.
+        #
+        # Requiring the recorded text to still be on the line means any edit
+        # that is not the known false positive makes the exception LAPSE and the
+        # gate go back to failing. An exception that can silently expire is
+        # strictly better than one that silently does not.
+        #
+        # WHY the false positive is real: line 3 of build/lintpack.py reads the
+        # RCON password at runtime -
+        #   pw=[l.split("=",1)[1] ... if l.startswith("rcon.password=")]
+        # - so it trips the detector twice. `rcon.password=` is the NAME of a
+        # server.properties key, matched inside a startswith() call, and the
+        # "value" the detector extracted is the code fragment `"))[`. And `pw=`
+        # is a local variable ASSIGNED FROM that read, so the text after `pw=`
+        # is a list comprehension, not a literal. No secret is written down
+        # anywhere in the file; the value only exists in memory.
+        #
+        # The checker's own docstring already states the rule being followed
+        # here: "a detector that flags the project's own variable names is a
+        # detector that gets switched off."
+        #
+        # PROVEN, not asserted. "It is only a config key name" is exactly the
+        # sentence that has hidden a real leak before, so the file was copied to
+        # the server and grepped with the LIVE password as a fixed-string
+        # pattern, printing only yes/no and never the value: 24-char password
+        # read from server.properties, not present. The same sweep over every
+        # other key in server.properties found no live value in this file
+        # either. (DEPLOYED.md did match two keys - resource-pack and
+        # resource-pack-sha1 - which are a public GitHub URL and a public hash,
+        # not credentials, and DEPLOYED.md exists to record them.)
+        ("rcon.password=",
+         "config-key name + a variable assigned from a runtime read; live "
+         "password proven absent by comparison 2026-09-28. Lapses if this line "
+         "stops containing rcon.password="),
+}
+
+
 def check(path, values):
     bad = []
     try:
@@ -236,10 +296,28 @@ def check(path, values):
     for i, line in enumerate(lines, 1):
         if MARKER in line:
             continue  # our own diagnostic, not the author's text
+        entry = ALLOWLIST.get((path.name, i))
+        # A lapsed entry is REPORTED, not silently dropped: if someone edits the
+        # line the exemption was written for, the next run says so out loud.
+        allow = None
+        if entry:
+            needle, why = entry
+            if needle in line:
+                allow = why
+            else:
+                print("  LAPSED  %s:%d  an allowlist entry for this line no longer "
+                      "matches (expected to still contain %r). The exception is "
+                      "void and the line is being checked normally."
+                      % (path, i, needle))
         # 1. credential-looking assignment
         for m in ASSIGN.finditer(line):
             val = m.group(2)
             if is_placeholder(val, line):
+                continue
+            if allow:
+                # Printed, never silent. A suppression nobody can see is a
+                # suppression nobody will ever re-check.
+                print("  ALLOWED %s:%d  %s" % (path, i, allow))
                 continue
             # The wording matters too, but see MARKER above for the real fix.
             bad.append("%s %s:%d  possible credential (label %s, %d chars, withheld)"

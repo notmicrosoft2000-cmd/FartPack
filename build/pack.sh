@@ -23,10 +23,25 @@
 # Only python3 is guaranteed on the build host, and the same is true of the
 # server - which has neither zip nor unzip. So zipping and unzipping both go
 # through zipfile, and this file is the single definition of the artifact.
+#
+# THE OUTPUT PATH IS IN THE REPO, NOT /tmp, AND THAT IS NOT COSMETIC. This used
+# to default to /tmp/fartpack-latest.zip, which left TWO files called
+# "fartpack-latest.zip" in play: the one this script writes, and a stale one
+# sitting in the working directory. Nothing about the name says which is which,
+# so the stale one got hashed, "determinism-checked" (twice, against itself, which
+# is not a check at all), uploaded and shipped - while the freshly built artifact
+# was never looked at. The stale copy was from the day before and contained the
+# v26 four-field `+= #famt` bug that #30 fixed, so the lint failed 8 lines that
+# had already been fixed in the tree and the real cause was upstream of the pack.
+# The deploy gate caught it; nothing before the gate could have. See #34.
+#
+# One path, in the repo, next to the source it is built from, and the SELF-CHECK
+# at the end asserts the bytes inside the zip are the bytes of the tree - so
+# "the artifact is the source" is a checked fact rather than an assumption.
 set -euo pipefail
 
 SRC=${1:-fartpack-latest}
-OUT=${2:-/tmp/fartpack-latest.zip}
+OUT=${2:-$PWD/fartpack-latest.zip}
 
 [ -d "$SRC" ] || { echo "FATAL: $SRC is not a directory"; exit 1; }
 [ -f "$SRC/pack.mcmeta" ] || { echo "FATAL: $SRC/pack.mcmeta missing"; exit 1; }
@@ -82,4 +97,50 @@ for want in ("pack.mcmeta", "data/fartpack/function/tick.mcfunction",
 # layout is wrong, so a light structural assertion is worth more than a hash.
 sys.exit(bad)
 PY
+echo
+echo "--- SELF-CHECK: is the artifact actually the tree? ---"
+# This is the check that would have caught the stale-zip incident, and it is the
+# only one that can: a hash tells you an artifact is stable, never that it is
+# CURRENT. Both were true of the file that got shipped - perfectly reproducible,
+# twice in a row, and from the day before.
+#
+# So read the zip back and compare it to the source, file by file, in both
+# directions: every entry must match its file on disk, and every file on disk
+# must appear. A one-directional check would pass on a zip that is missing
+# something, which is the half of the problem that actually breaks a datapack -
+# a function that silently is not there.
+python3 - "$SRC" "$OUT" <<'PY'
+import pathlib, sys, zipfile
+
+src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+
+want = {}
+for p in src.rglob("*"):
+    if p.is_file():
+        want[p.relative_to(src).as_posix()] = p.read_bytes()
+
+with zipfile.ZipFile(out) as z:
+    got = {n: z.read(n) for n in z.namelist()}
+
+missing = sorted(set(want) - set(got))   # in the tree, absent from the zip
+extra   = sorted(set(got) - set(want))   # in the zip, absent from the tree
+differ  = sorted(n for n in set(want) & set(got) if want[n] != got[n])
+
+for label, names in (("MISSING FROM ZIP", missing), ("EXTRA IN ZIP", extra),
+                     ("CONTENT DIFFERS", differ)):
+    for n in names:
+        print("  %-17s %s" % (label, n))
+
+if missing or extra or differ:
+    print("  SELF-CHECK FAILED: the zip is not the source tree. Do not ship it.")
+    sys.exit(1)
+print("  ok   %d files, every one byte-identical to the tree, nothing extra" % len(want))
+PY
+
+echo
+# One greppable line naming the artifact and its hash. The deploy handshake
+# compares hashes, and that comparison is only meaningful if both sides are
+# talking about the same file - so the path is printed, not assumed.
+echo "ARTIFACT: $OUT"
+echo "SHA1: $(sha1sum "$OUT" | cut -d' ' -f1)"
 echo "zip built at: $OUT"

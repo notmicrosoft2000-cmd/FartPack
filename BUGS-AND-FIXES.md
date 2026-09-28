@@ -1510,6 +1510,177 @@ and the case-match labelled all five **rejected** cases as "accepted". A chest
 fixed the fixture; the two rejections above are what make that run trustworthy.
 
 
+### #34 — v30/v31/v32: the heal, and a measurement that was right about the wrong thing · **FIXED in v32**
+
+Five versions of the same mechanic, and the reason it is written up as one entry
+is that the *symptom* was constant ("the crouch heal doesn't work") while the cause
+was different every time. A player reporting a bug is evidence about their
+experience, not a pointer at a line number, and three of the five causes were
+found by reading a number rather than by reading code.
+
+#### 1. It was unreachable, then it was invisible, then it was absurd
+
+* **v28** shipped no crouch heal at all — a deliberate revert.
+* **v29** re-added it as `regeneration 100000 0`. Vanilla heals **1 HP every
+  `50 >> amplifier` ticks**, so amplifier 0 is half a heart every 2.5 seconds. The
+  `100000` was duration, not strength, and reading it as strength is the whole
+  mistake. It was in fact removed again in the same pass.
+* **v30** shipped `regeneration 2 0` and it "worked" and nobody noticed, for the
+  same arithmetic reason wearing a different hat.
+* **v31** shipped `regeneration 2 5` — **Regeneration VI, 1 HP per tick**, a full
+  health bar in one tick, 16× amplifier 4. The player reported "god its too much".
+
+So "it does not work" and "it is absurd" were the same number read from opposite
+ends, and neither report identified the line. Amplifier 3 is the current default:
+a full heal in about six seconds, slow enough to read as a heal rather than a
+heal button. It is a live score (`#healamp`) precisely because this has now been
+re-tuned twice and there is no reason it should not be re-tuned a third time
+without a version bump.
+
+#### 2. The gas was not being charged for the heal
+
+`fart.healing` is added on the second tick of a crouch and the only line that
+removes it is the "no longer sneaking" one. It is **not** removed when the tank
+empties. Gating the effect on that tag alone meant a player could crouch on an
+empty tank and keep the tag — and at 1 HP/tick the heal simply out-paced the
+strain damage `player/stress` charges for having no gas. Free full health for
+holding a key, which deletes the gas economy the whole pack is built on. This is
+the third time this file has shipped an ungated heal.
+
+v31 fixed it with `fart.pressure=1..`. The player then found the next hole in it:
+gas is **movement**-fed and a crouch drains it, so a `pressure > 0` gate can be
+farmed by crouch-moving in small circles to keep trickling the tank over the line
+and collecting a tick or two of regen each pass. v32 requires `> #healmin` (10),
+so healing is bought with a genuinely full bar and the total is bounded by the gas
+rather than by how finely that gas can be dribbled past a threshold.
+
+#### 3. The six syntax traps, all of which cost a version
+
+* **An UNSET score matches no range at all** — not `matches 0`, not `matches 1..`.
+  The self-seed therefore has to be `unless score … matches ..-1`, not `matches 0`;
+  the latter would have left the heal silently dead while every other line kept
+  working. Same trap as `fart.rate`.
+* **`effect give` cannot take a score**, only a literal, so a tunable amplifier is
+  six branches — the same enum trap as `#radius`.
+* **`matches #healmin+1..` is not a thing.** A range needs literals, so the
+  threshold comparison is `if score @s fart.pressure > #healmin fart.var`.
+* **That 4-field comparison needs the source objective for a FAKE player and must
+  omit it for an entity.** All five fields is rejected outright.
+* **A `title` actionbar is last-write-wins**, so two of them in one function means
+  the second silently replaces the first.
+* **RCON drops the connection above ~1450 characters of command text** (1433
+  accepted, 1455 lost). The profile book had to be cut from 2149 to 1329 chars to
+  fit. `RCON_MAX=1400` now fails the lint closed.
+
+#### 4. A component that PARSES is not a component that PRINTS WHAT YOU THINK
+
+The real find, and the reason this entry is long. v31's profile readout used
+
+```
+{"selector":"@s","scores":{"fart.rate":1}}
+```
+
+to display the player's `fart.rate`. It parses. It does not do that. A `selector`
+component prints the **name** of whatever the selector matched, and the `scores`
+argument only decides whether to print at all — so the function rendered
+
+> bar fills at **rate Fartgod** | bar size **Fartgod** | knockback **Fartgod**
+
+and a genuine `0` deleted the field rather than showing it. Every gate passed,
+because the command succeeded. The correct form is the other component type,
+`{"score":{"name":"@s","objective":"fart.rate"}}`, which the pack has used in
+`admin/*` since v29 without anyone having to wonder what it did.
+
+The instructive part is how it got in. `profile/apply` carries a comment recording
+that a `scores` filter on a selector component was **measured** to be accepted —
+with a deliberately malformed control alongside it, precisely so the acceptance
+would mean something. The measurement was sound. **The inference drawn from it was
+not**: "it accepts a `scores` filter" was read as "so this prints the score", when
+the filter's entire job is to filter. A probe that establishes a fact about the
+*parser* was used to conclude something about the *renderer*, and no amount of
+probing the parser could ever have caught it. Rendering is the one thing RCON
+cannot read back.
+
+Two rules came out of it. One, the obvious one: **probe the thing you are going to
+claim.** Two, the one that cost the most: **a negative control that the server
+rejects proves your probe can fail; it does not prove the positive case renders.**
+A component pointed at a nonexistent objective was *accepted silently*, so "no
+error" was worthless as a signal in the same run — which is now recorded in
+`build/README.md` as the standing rule.
+
+#### 5. Two gates of my own that lied about what they checked
+
+* **`lintpack.py` used one socket for ~1200 commands.** The connection was closed
+  partway through and `BrokenPipeError` killed the run, so a pack with real parse
+  failures could report clean. It now reconnects and retries, and **an
+  over-long or uncheckable line is a hard failure, not a skip** — failing closed
+  is the only safe direction for a gate.
+* **`build/probe-booklen.py` reported a verdict about a command it never saw.** It
+  wrapped "accepted, empty response" in the same `<< >>` markers used for transport
+  loss and tested `startswith("<<")`, so a **success was reported as a dropped
+  connection** — the exact inverse of the truth. It now distinguishes ANSWERED /
+  SILENT / LOST explicitly and runs a mandatory control command before trusting any
+  negative. Same root cause as §4: a probe that reports on something it did not
+  examine is worse than no probe, because it is believed.
+
+#### 6. A determinism check run against a file that was never built
+
+The v32 deploy aborted with **8 parse failures** in `player/apply_gas` and
+`admin/recalc` — lines I had personally edited earlier the same session to add
+the trailing source objective, and lines whose own comments document the fix as
+belonging to #30. `scoreboard players operation` takes five fields; the lint
+reported four, on files whose gas bar demonstrably fills in-game.
+
+The tempting move was to "fix" the pack by deleting `fart.var` from those lines,
+because that is what would have made the lint go green. That would have
+**reintroduced the v26 gas bug for real** — the one where the whole file fails to
+load and the bar silently stops filling for everyone. The gate was right and the
+code looked wrong, and the only reason that was resolvable is that the two
+disagreed in a way that could be checked rather than argued about.
+
+The actual cause was one layer up. `build/pack.sh` defaulted its output to
+`/tmp/fartpack-latest.zip`, while a **stale `fartpack-latest.zip` from the
+previous day sat in the working directory**. The script wrote the real build to
+`/tmp`; I hashed `./fartpack-latest.zip` in the repo. So:
+
+* the sha1 I reported as "v32" was a **day-old artifact**,
+* the "two builds are byte-identical" check hashed that same untouched file
+  twice, which is not a determinism check at all — it is a tautology,
+* the freshly built artifact was never inspected once,
+* and that stale 64 KB zip really did contain the v26 four-field bug, so the lint
+  was reporting a true finding about a file that was not the one I believed I
+  was shipping.
+
+Three fixes, in increasing order of how much they actually prevent:
+
+1. **The stale file was deleted.** It was untracked (`*.zip` is in `.gitignore`),
+   so it would never have shown up in a diff or a status, and it sat in the one
+   directory anyone would build from. A file that is ignored by git and named
+   exactly like the build output is the worst of both worlds: invisible and
+   authoritative.
+2. **`pack.sh` now writes into the repo**, next to the source it builds from, so
+   there is one artifact and one name.
+3. **`pack.sh` now reads its own output back and compares it to the source tree**,
+   in both directions — every entry must match its file, and every file must
+   appear. This is the check that matters, and it is the one that was missing:
+   **a hash proves an artifact is stable, never that it is current.** The shipped
+   file was perfectly reproducible and two days out of date at the same time.
+
+The transferable rule, and it is the same one as §4 and §5 from a new direction:
+**when a gate contradicts something you are confident about, the cheapest
+explanation is that the gate is looking at a different artifact than you are.**
+Check the artifact's provenance before you edit the code it is complaining about.
+Every one of these entries is a verifier reporting a verdict about something it
+did not examine — the linter, the probe, the determinism check, and me.
+
+
+The rendered text of a `score` component naming `@s` — accepted by the server,
+but per §4 acceptance is not rendering, and there is no way to read an actionbar
+back over RCON. Needs one human glance at `profile/stats`. The *feel* of
+amplifier 3 also needs a human: the number is chosen by arithmetic, and arithmetic
+is not what "noticeable" means.
+
+
 ## 2b. v25 — the weather and event port
 
 An independent fork of this pack (v18-era, pre-Pass-A) was found with a lot of new content and none
