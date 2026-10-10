@@ -15,7 +15,7 @@
 #             copy to drift. The sentence itself lives in exactly one place,
 #             world/fart_msg, because a string macro is the only way to splice a
 #             computed name into JSON.
-scoreboard players add #stats fart.total 1
+scoreboard players add #stats fart.blocks 1
 function fartpack:world/fart_sound
 execute at @s run function fartpack:world/block_name
 execute at @s run function fartpack:world/fart_msg with storage fartpack:msg

@@ -1,4 +1,4 @@
-scoreboard players add #stats fart.total 1
+execute if entity @s[type=minecraft:player] run scoreboard players add @s fart.total 1
 execute unless entity @s[type=#fartpack:boss] run effect give @s minecraft:glowing 3 0 true
 execute unless entity @s[type=#fartpack:boss] run tellraw @a[name=!"Server",distance=..24] [{"text":"BROOFT! ","color":"gold"},{"selector":"@s"},{"text":" farted!","color":"yellow"}]
 execute unless entity @s[type=#fartpack:boss] run function fartpack:world/fart_sound

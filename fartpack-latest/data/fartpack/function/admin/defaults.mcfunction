@@ -29,6 +29,10 @@
 scoreboard players set @s fart.rate 1
 scoreboard players set @s fart.every 1
 scoreboard players set @s fart.cyc 0
+# v30: the crouch-heal gas bank. Not a config value - it is per-player state,
+# listed here so a rejoin starts at zero rather than inheriting a partial
+# payment. See player/press for what buys what.
+scoreboard players set @s fart.healgas 0
 scoreboard players set @s fart.rel 1
 scoreboard players set @s fart.pow 30
 scoreboard players set @s fart.cap 100

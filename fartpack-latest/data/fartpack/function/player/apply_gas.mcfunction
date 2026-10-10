@@ -38,6 +38,23 @@ execute if score @s fart.rate matches 2.. run scoreboard players operation @s fa
 execute if score @s fart.rate matches 3.. run scoreboard players operation @s fart.pressure += #famt fart.var
 execute if score @s fart.rate matches 4.. run scoreboard players operation @s fart.pressure += #famt fart.var
 execute if score @s fart.rate matches 5.. run scoreboard players operation @s fart.pressure += #famt fart.var
+# v31: THE KING'S DOUBLE GAS, and it used to be `fart.rate 2` written by
+# king/crowned and undone by king/demote. That was fine until profiles arrived:
+# fart.rate belongs to the player's chosen profile, and a demotion hard-setting it
+# back to 1 silently threw the profile away. Two systems writing one score is the
+# defect, not the crown.
+#
+# So the crown's bonus is a TAG TEST here, where the other rate steps are, and the
+# king functions no longer touch fart.rate at all. The observable behaviour is
+# identical - one extra add of #famt per pass, exactly what rate 2 did - and it now
+# composes: a king with a heavy profile keeps the heavy profile AND the crown.
+# It is also self-healing on rejoin, where the old version was not: core/on_join
+# demotes a returning king, which used to cost them the rate they had earned.
+#
+# `tag=!fart.king` is not needed - the other lines are cumulative steps keyed on
+# rate, and this one is a separate additive step, so a king at rate 4 gets 4 + 1
+# = 5 adds. That is the intended reading of "the king fills faster", not a bug.
+execute if entity @s[tag=fart.king] run scoreboard players operation @s fart.pressure += #famt fart.var
 # Clamp to this player's cap rather than to the old constant 100. Guarded on
 # `fart.cap matches 1..` because an `execute if score` against an unset holder
 # fails outright, and a player mid-upgrade would otherwise have their bar stop

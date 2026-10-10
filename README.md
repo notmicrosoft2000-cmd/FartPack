@@ -83,6 +83,17 @@ concludes the pack is corrupt and blocks a deploy that was completely fine. Brow
 Minecraft both follow the redirect, so only a naive fetch is wrong. `build/rpdeploy.sh` does this
 correctly and prints the final URL.
 
+### Adding new sounds
+
+Full procedure, including the exact format new recordings must match
+(mono / 48000 Hz / Ogg Vorbis) and the reference durations of the existing set:
+`docs/SOUND-DROP-IN.md`.
+
+Short version: drop `.ogg` files named `fart7.ogg`+ into
+`fartpack_sounds/assets/fartpack/sounds/`, then add each to the `fart.burp`
+variant list in `assets/fartpack/sounds.json`, rebuild, `rpverify.sh`,
+`rpdeploy.sh`. The restart is gated on 0 players online.
+
 ## Verifying changes on the live server
 
 `build/verifyv20.sh` and `build/stresstest.sh` (copy both to `/tmp/` on the server) exercise the

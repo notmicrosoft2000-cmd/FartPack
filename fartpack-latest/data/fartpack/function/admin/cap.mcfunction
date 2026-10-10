@@ -35,6 +35,34 @@ $scoreboard players set $(arg0) fart.cap $(arg1)
 $execute if score $(arg0) fart.cap matches ..19 run scoreboard players set $(arg0) fart.cap 20
 $execute if score $(arg0) fart.cap matches 501.. run scoreboard players set $(arg0) fart.cap 500
 $scoreboard players operation $(arg0) fart.leg = $(arg0) fart.cap
+# fart.near, the 80% near-full warning, and the re-derivation of fart.warn after
+# it borrows warn as a scratch. Kept in step with admin/recalc BY HAND - this file
+# cannot call that one, see the note at the top. #rc_five is seeded by
+# core/bootstrap alongside #rc_four; both are re-set per call rather than trusted,
+# because a missing constant here would divide by nothing without saying so.
+# #rc_five is NOT re-set here, only consumed, because a `$scoreboard players set
+# #rc_five fart.var 5` line would reference no macro variable and would make the
+# loader drop this entire file (#12). The constant is seeded by core/bootstrap and
+# re-seeded by admin/recalc, which is the same treatment #rc_four already gets in
+# this file: used, never defined. An earlier version of this edit DID try to set it
+# here, and checkmacro caught it - which is the gate doing the one job it exists
+# for, on the one class of bug that is invisible until the file stops loading.
+# THE SCRATCH IS `fart.warn`, NOT A FAKE PLAYER, and that is forced by #12: a macro
+# line that references no macro variable makes the loader drop the whole file. The
+# obvious spelling of 80% needs a scratch that is not the player -
+# `#rc_tmp2 = $(arg0) cap` then `#rc_tmp2 /= #rc_five` - and the second of those
+# lines mentions neither the player nor a macro var, so the file would vanish at
+# load time and take the whole config layer with it. It is a SILENT failure: the
+# admin commands are already unreachable (#32), so nothing would report it.
+#
+# So the fifth is borrowed, taken BEFORE the real value is written and put back
+# immediately after. Every line below mentions $(arg0), the scratch lives on the
+# player rather than in a global, and the ordering is load-bearing: warn is
+# overwritten with the correct quarter-of-cap on the last line.
+$scoreboard players operation $(arg0) fart.warn = $(arg0) fart.cap
+$scoreboard players operation $(arg0) fart.warn /= #rc_five fart.var
+$scoreboard players operation $(arg0) fart.near = $(arg0) fart.cap
+$scoreboard players operation $(arg0) fart.near -= $(arg0) fart.warn
 $scoreboard players operation $(arg0) fart.warn = $(arg0) fart.cap
 $scoreboard players operation $(arg0) fart.warn /= #rc_four fart.var
 $execute if score $(arg0) fart.pressure > $(arg0) fart.cap run scoreboard players operation $(arg0) fart.pressure = $(arg0) fart.cap
